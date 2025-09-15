@@ -64,6 +64,7 @@ class PatchEmbed(nn.Module):
                 bias=self.bias,
                 flatten=True,  # (N, T, embed_dim)
             )
+            self.init_weights2d()
         return self.patch_embedding_2d
 
     def _build_3d_patch_embedding(self) -> None:
@@ -72,9 +73,8 @@ class PatchEmbed(nn.Module):
             self.patch_embedding_3d = nn.Conv3d(
                 self.in_chans, self.embed_dim, kernel_size=patch_size_3d, stride=patch_size_3d, bias=self.bias
             )
+            self.init_weights3d()
         return self.patch_embedding_3d
-
-    # --- forwards ---
 
     def _forward_2d(self, x: torch.Tensor) -> torch.Tensor:
         assert self.patch_embedding_2d is not None, "2D patch embedding not initialized"
@@ -83,7 +83,7 @@ class PatchEmbed(nn.Module):
     def _forward_3d(self, x: torch.Tensor) -> torch.Tensor:
         assert self.patch_embedding_3d is not None, "3D patch embedding not initialized"
         x = self.patch_embedding_3d(x)             # (N, embed_dim, D/pd, H/ph, W/pw)
-        N, embed_dim, d, h, w = x.shape
+        # N, embed_dim, d, h, w = x.shape
         x = x.flatten(2).transpose(1, 2)           # (N, T, embed_dim)
         return x
 
@@ -107,23 +107,31 @@ class PatchEmbed(nn.Module):
             self._build_3d_patch_embedding()
         return self._forward_3d(x)
 
-    def init_weights(self) -> None:
+    def init_weights2d(self) -> None:
         """
         Xavier-uniform on projection weights; zero bias if present.
         Works for both 2D (timm PatchEmbed) and 3D (Conv3d) paths.
         """
-        # If the 2D path is constructed
-        if getattr(self, "patch_embedding_2d", None) is not None:
+        if self.patch_embedding_2d is not None:
             proj = self.patch_embedding_2d.proj  # Conv2d inside timm PatchEmbed
             w = proj.weight
             nn.init.xavier_uniform_(w.view(w.shape[0], -1))
             if proj.bias is not None:
                 nn.init.constant_(proj.bias, 0)
 
-        # If the 3D path is constructed
-        if getattr(self, "patch_embedding_3d", None) is not None:
+    def init_weights3d(self) -> None:
+        if self.patch_embedding_3d is not None:
             proj3d = self.patch_embedding_3d  # Conv3d
             w3 = proj3d.weight
             nn.init.xavier_uniform_(w3.view(w3.shape[0], -1))
             if proj3d.bias is not None:
                 nn.init.constant_(proj3d.bias, 0)
+
+    def init_weights(self) -> None:
+        """
+        Xavier-uniform on projection weights; zero bias if present.
+        Works for both 2D (timm PatchEmbed) and 3D (Conv3d) paths.
+        """
+        # If the 2D path is constructed
+        self.init_weights2d()
+        self.init_weights3d()

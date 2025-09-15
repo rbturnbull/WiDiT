@@ -110,11 +110,9 @@ class WiDiT(nn.Module):
             spatial_dim=self.spatial_dims,
         )
 
-        self._init_weights()
+        self.init_weights()
 
-    # ------------------- initialization -------------------
-
-    def _init_weights(self) -> None:
+    def init_weights(self) -> None:
         def _xavier_linear(module: nn.Module) -> None:
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
@@ -123,22 +121,17 @@ class WiDiT(nn.Module):
 
         self.apply(_xavier_linear)
 
-        # Timestep MLP small init (typical DiT practice)
-        nn.init.normal_(self.timestep_embedder.mlp[0].weight, std=0.02)
-        nn.init.normal_(self.timestep_embedder.mlp[2].weight, std=0.02)
-
-        # Zero-init the final linear in adaLN branches (adaLN-Zero)
-        for block in self.blocks:
-            nn.init.constant_(block.adaln[-1].weight, 0)
-            nn.init.constant_(block.adaln[-1].bias,  0)
-
-        nn.init.constant_(self.final.adaln[-1].weight, 0)
-        nn.init.constant_(self.final.adaln[-1].bias,  0)
-        nn.init.constant_(self.final.linear.weight, 0)
-        nn.init.constant_(self.final.linear.bias,   0)
+        # Timestep MLP small init
+        self.timestep_embedder.init_weights()
 
         self.input_patch_embed.init_weights()
         self.conditioned_patch_embed.init_weights()
+        
+        for block in self.blocks:
+            block.init_weights()
+        
+        self.final.init_weights()
+
 
     def _unpatchify(self, token_tensor: torch.Tensor, spatial_sizes: tuple[int, ...]) -> torch.Tensor:
         """

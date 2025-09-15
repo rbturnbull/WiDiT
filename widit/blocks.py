@@ -193,6 +193,22 @@ class WiDiTBlock(nn.Module):
         tokens = tokens + gate_mlp.unsqueeze(1) * self.mlp(h)
         return tokens
 
+    def init_weights(self) -> None:
+        """
+        adaLN-Zero: zero the *last* Linear in the adaLN MLP so the residual gates
+        start closed and the network behaves like a vanilla transformer at init.
+        """
+        # Find the last Linear in self.adaln safely (sequence: SiLU -> Linear)
+        last_linear = None
+        for module in reversed(self.adaln):
+            if isinstance(module, nn.Linear):
+                last_linear = module
+                break
+        if last_linear is not None:
+            nn.init.constant_(last_linear.weight, 0)
+            if last_linear.bias is not None:
+                nn.init.constant_(last_linear.bias, 0)
+
 
 class WiDiTFinalLayer(nn.Module):
     """
@@ -226,3 +242,24 @@ class WiDiTFinalLayer(nn.Module):
         else:
             shift, scale = self.adaln(timestep_embedding).chunk(2, dim=1)
         return self.linear(modulate(self.norm(tokens), shift, scale))
+
+    def init_weights(self) -> None:
+        """
+        adaLN-Zero for the head + zero output projection.
+        Matches the behavior you previously had in models.py.
+        """
+        # Zero the last Linear in ada (SiLU -> Linear)
+        last_linear = None
+        for module in reversed(self.adaln):
+            if isinstance(module, nn.Linear):
+                last_linear = module
+                break
+        if last_linear is not None:
+            nn.init.constant_(last_linear.weight, 0)
+            if last_linear.bias is not None:
+                nn.init.constant_(last_linear.bias, 0)
+
+        # Zero the output projection so the head starts as identity via residuals
+        nn.init.constant_(self.linear.weight, 0)
+        if self.linear.bias is not None:
+            nn.init.constant_(self.linear.bias, 0)

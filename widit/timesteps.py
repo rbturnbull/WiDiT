@@ -30,3 +30,12 @@ class TimestepEmbedder(nn.Module):
 
     def forward(self, t):
         return self.mlp(self.timestep_embedding(t, self.frequency_embedding_size))
+
+    def init_weights(self, std: float = 0.02) -> None:
+        """
+        Initialize weights like your previous models.py:
+        - Normal(0, std) on the two Linear *weights* in the MLP.
+        - Leave biases unchanged.
+        """
+        nn.init.normal_(self.mlp[0].weight, std=std)
+        nn.init.normal_(self.mlp[2].weight, std=std)
