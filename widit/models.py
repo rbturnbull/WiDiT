@@ -1,44 +1,109 @@
+from typing import Sequence
+
 import torch
 import torch.nn as nn
-from timm.models.vision_transformer import PatchEmbed, Mlp
 
+from .patch import PatchEmbed
+from .blocks import WiditBlock, WiditFinalLayer
+from .timesteps import TimestepEmbedder
+from .window import _to_sizes, _prod
 
-class SwinIRDiT(nn.Module):
+class Widit(nn.Module):
     """
-    2D windowed attention backbone without downsampling (best SR fidelity).
-    Two parallel patch embedders (x and conditioned) -> concat -> SwinIR blocks -> head.
+    SwinIR-style DiT with N-D windowed attention (2D or 3D), no downsampling.
+
+    Pipeline:
+      two PatchEmbeds (x, conditioned) -> concat tokens -> depth×(WiditBlock) -> WiditFinalLayer -> unpatchify
+
+    Args:
+      spatial_dim: 2 for 2D, 3 for 3D
+      input_size: kept for API parity; not required by forward
+      patch_size: int or per-axis tuple
+      in_channels: input channels
+      hidden_size: token embedding dim (sum of x/y embed dims)
+      depth, num_heads, window_size, mlp_ratio: transformer hyperparams
+      learn_sigma: if True, predict mean+sigma (out_channels = 2*in_channels)
     """
     def __init__(
         self,
-        input_size=500,
-        patch_size=2,
-        in_channels=1,
-        hidden_size=768,
-        depth=12,
-        num_heads=12,
-        window_size=8,
-        mlp_ratio=4.0,
-        learn_sigma=True,
+        *,
+        spatial_dim: int,
+        input_size: int | Sequence[int] | None = None,
+        patch_size: int | Sequence[int] = 2,
+        in_channels: int = 1,
+        hidden_size: int = 768,
+        depth: int = 12,
+        num_heads: int = 12,
+        window_size: int | Sequence[int] = 8,
+        mlp_ratio: float = 4.0,
+        learn_sigma: bool = True,
     ):
         super().__init__()
-        self.learn_sigma = learn_sigma
+        assert spatial_dim in (2, 3), f"spatial_dim must be 2 or 3, got {spatial_dim}"
+        self.k = spatial_dim
         self.in_channels = in_channels
+        self.learn_sigma = learn_sigma
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
-        self.patch_size = patch_size
+        self.patch_size = _to_sizes(patch_size, self.k)
+        self.window_size = _to_sizes(window_size, self.k)
 
-        # two embedders whose dims sum to hidden_size
-        self.x_embed = PatchEmbed(input_size, patch_size, in_channels, hidden_size // 2, bias=True)
-        self.y_embed = PatchEmbed(input_size, patch_size, in_channels, hidden_size // 2, bias=True)
+        # Split hidden_size evenly across x/y patch embeds
+        half = hidden_size // 2
+        assert half * 2 == hidden_size, "hidden_size must be even (x/y embeds split evenly)"
+
+        assert (hidden_size % num_heads) == 0, \
+            f"hidden_size ({hidden_size}) must be divisible by num_heads ({num_heads})"
+
+        # Patch embedders (channels-first inputs)
+        self.x_embed = PatchEmbed(
+            input_size=input_size,
+            patch_size=self.patch_size,
+            in_chans=in_channels,
+            embed_dim=half,
+            bias=True,
+            spatial_dim=self.k,
+        )
+        self.y_embed = PatchEmbed(
+            input_size=input_size,
+            patch_size=self.patch_size,
+            in_chans=in_channels,
+            embed_dim=half,
+            bias=True,
+            spatial_dim=self.k,
+        )
+
+        # Timestep embedder -> same dim as token dim (hidden_size)
         self.t_embed = TimestepEmbedder(hidden_size)
 
+        # Blocks (Swin shift pattern: 0, ws//2, 0, ws//2, ...)
         blocks = []
+        shift_even = (0,) * self.k
+        shift_odd = tuple(w // 2 for w in self.window_size)
         for i in range(depth):
-            shift = 0 if (i % 2 == 0) else window_size // 2
-            blocks.append(SwinIRBlock(hidden_size, num_heads, window_size, shift, mlp_ratio))
+            shift = shift_even if (i % 2 == 0) else shift_odd
+            blocks.append(
+                WiditBlock(
+                    dim=hidden_size,
+                    num_heads=num_heads,
+                    window_size=self.window_size,
+                    shift_size=shift,
+                    mlp_ratio=mlp_ratio,
+                    spatial_dim=self.k,
+                )
+            )
         self.blocks = nn.ModuleList(blocks)
 
-        self.head = FinalLayer(hidden_size, patch_size, self.out_channels)
+        # Head
+        self.head = WiditFinalLayer(
+            hidden_size=hidden_size,
+            patch_size=self.patch_size[0] if self.k == 2 else self.patch_size[0],  # scalar p (same per-axis)
+            out_channels=self.out_channels,
+            spatial_dim=self.k,
+        )
+
         self._init_weights()
+
+    # ------------------- init -------------------
 
     def _init_weights(self):
         def _basic(m):
@@ -46,202 +111,139 @@ class SwinIRDiT(nn.Module):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
-
         self.apply(_basic)
 
-        for pe in [self.x_embed, self.y_embed]:
-            w = pe.proj.weight.data
-            nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-            nn.init.constant_(pe.proj.bias, 0)
-
+        # Timestep MLP small init (matches common DiT setups)
         nn.init.normal_(self.t_embed.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embed.mlp[2].weight, std=0.02)
 
+        # Zero-init ada last linear in each block (adaLN-Zero)
         for b in self.blocks:
             nn.init.constant_(b.ada[-1].weight, 0)
-            nn.init.constant_(b.ada[-1].bias, 0)
+            nn.init.constant_(b.ada[-1].bias,  0)
 
+        # Head: zero-init ada last and output linear
         nn.init.constant_(self.head.ada[-1].weight, 0)
-        nn.init.constant_(self.head.ada[-1].bias, 0)
+        nn.init.constant_(self.head.ada[-1].bias,  0)
         nn.init.constant_(self.head.linear.weight, 0)
-        nn.init.constant_(self.head.linear.bias, 0)
+        nn.init.constant_(self.head.linear.bias,   0)
 
-    def unpatchify(self, x, H, W):
-        # x: (N, T, p*p*c) -> (N, c, H, W)
+        # PatchEmbed init: xavier on conv/timm proj weights, zero bias
+        def _init_patch_embed(pe: PatchEmbed):
+            # Build already happened in __init__ (since spatial_dim is fixed),
+            # so exactly one of the paths must be present.
+            if pe.patch_embedding_2d is not None:
+                proj = pe.patch_embedding_2d.proj  # timm conv2d
+                w = proj.weight.data
+                nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+                if proj.bias is not None:
+                    nn.init.constant_(proj.bias, 0)
+            elif pe.patch_embedding_3d is not None:
+                proj = pe.patch_embedding_3d       # conv3d
+                w = proj.weight.data
+                nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+                if proj.bias is not None:
+                    nn.init.constant_(proj.bias, 0)
+            else:
+                # If user constructed with spatial_dim=None, the path might not be built yet.
+                # In this model we always pass spatial_dim (2 or 3), so this shouldn't happen.
+                pass
+
+        _init_patch_embed(self.x_embed)
+        _init_patch_embed(self.y_embed)
+
+    def _unpatchify(self, x: torch.Tensor, spatial: tuple[int, ...]) -> torch.Tensor:
+        """
+        x:       (N, T, (p^k) * out_channels)
+        spatial: (S1,...,Sk) original spatial sizes
+        returns: (N, out_channels, *spatial)
+        """
         N, T, PPc = x.shape
         p = self.patch_size
         c = self.out_channels
-        h = H // p
-        w = W // p
-        assert h * w == T, "Token count mismatch in unpatchify."
-        x = x.view(N, h, w, p, p, c)
-        x = torch.einsum('nhwpqc->nchpwq', x)
-        return x.reshape(N, c, H, W)
+        k = self.k
+        assert all(p[i] == p[0] for i in range(k)), "unpatchify assumes equal patch along each axis"
+        p_scalar = p[0]
 
-    def forward(self, x, t, conditioned):
-        # x, conditioned: (N, C, H, W); t: (N,)
-        N, C, H, W = x.shape
-        ex = self.x_embed(x)              # (N, T, D/2)
-        ey = self.y_embed(conditioned)    # (N, T, D/2)
-        z = torch.cat([ex, ey], dim=-1)   # (N, T, D)
-        Hp, Wp = H // self.patch_size, W // self.patch_size
-        assert Hp * Wp == z.shape[1]
-        c = self.t_embed(t)               # (N, D)
+        # grid sizes in tokens
+        grid = tuple(Si // p_scalar for Si in spatial)
+        assert _prod(grid) == T, f"Token count mismatch in unpatchify: prod{grid} != {T}"
+        assert PPc == (p_scalar ** k) * c, f"Last dim should be p^k * c, got {PPc} vs {(p_scalar ** k) * c}"
 
-        for blk in self.blocks:
-            z = blk(z, c, Hp, Wp)
+        # reshape to (N, g1,...,gk, p,...,p, c)
+        x = x.view(N, *grid, *([p_scalar] * k), c)
 
-        out = self.head(z, c)             # (N, T, p*p*outC)
-        return self.unpatchify(out, H, W)
+        # permute to (N, c, g1, p, g2, p, ..., gk, p)
+        # then merge (gi, p) -> Si for each axis
+        # Build permutation programmatically:
+        # current dims: [N] + [g1..gk] + [p1..pk] + [c]
+        # target order: N, c, g1, p1, g2, p2, ..., gk, pk
+        perm = [0, 1 + 2 * k]  # N, c
+        for i in range(k):
+            perm.extend([1 + i, 1 + k + i])
+        x = x.permute(*perm).contiguous()
 
-# Config helpers (2D)
-def SwinIRDiT_B_2(**kw):  return SwinIRDiT(depth=12, hidden_size=768,  patch_size=2, num_heads=12, **kw)
-def SwinIRDiT_L_2(**kw):  return SwinIRDiT(depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kw)
-def SwinIRDiT_XL_2(**kw): return SwinIRDiT(depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kw)
+        # merge pairs
+        out_shape = [N, c]
+        for i in range(k):
+            out_shape.append(grid[i] * p_scalar)
+        return x.view(*out_shape)
 
-SwinIRDiT_models = {
-    "SwinIRDiT-B/2": SwinIRDiT_B_2,
-    "SwinIRDiT-L/2": SwinIRDiT_L_2,
-    "SwinIRDiT-XL/2": SwinIRDiT_XL_2,
-}
+    def forward(self, x: torch.Tensor, t: torch.Tensor, conditioned: torch.Tensor) -> torch.Tensor:
+        """
+        x, conditioned: (N, C, *spatial)  where len(spatial) == k
+        t:              (N,)
+        returns:        (N, out_channels, *spatial)
+        """
+        assert x.ndim == 2 + self.k, f"x has incorrect shape {tuple(x.shape)}"
+        assert conditioned.shape == x.shape, "`conditioned` must match x shape"
 
-# =========================================================
-# ========================= 3D ============================
-# =========================================================
+        N = x.shape[0]
+        spatial = tuple(x.shape[2 + i] for i in range(self.k))
 
-# ----- 3D PatchEmbed -----
-class PatchEmbed3D(nn.Module):
-    """Conv3d(patch, patch, patch) -> tokens (N, T, D)."""
-    def __init__(self, input_size, patch_size, in_chans, embed_dim, bias=True):
-        super().__init__()
-        p = patch_size
-        self.proj = nn.Conv3d(in_chans, embed_dim, kernel_size=p, stride=p, bias=bias)
+        # Patch embed both inputs and concat along channel dim (token dim)
+        ex = self.x_embed(x)               # (N, T, hidden/2)
+        ey = self.y_embed(conditioned)     # (N, T, hidden/2)
+        z = torch.cat([ex, ey], dim=-1)    # (N, T, hidden)
 
-    def forward(self, x):  # x: (N, C, D, H, W)
-        x = self.proj(x)   # (N, Dm, D/p, H/p, W/p)
-        N, Dm, d, h, w = x.shape
-        x = x.flatten(2).transpose(1, 2)  # (N, T, Dm)
-        return x
-
-
-
-
-class SwinIRDiT3D(nn.Module):
-    """
-    3D windowed attention backbone without downsampling (best SR fidelity).
-    Two parallel patch embedders (x and conditioned) -> concat -> SwinIR 3D blocks -> head.
-    """
-    def __init__(
-        self,
-        input_size=128,
-        patch_size=2,
-        in_channels=1,
-        hidden_size=768,
-        depth=12,
-        num_heads=12,
-        window_size=4,
-        mlp_ratio=4.0,
-        learn_sigma=True,
-    ):
-        super().__init__()
-        self.learn_sigma = learn_sigma
-        self.in_channels = in_channels
-        self.out_channels = in_channels * 2 if learn_sigma else in_channels
-        self.patch_size = patch_size
-
-        # two 3D embedders whose dims sum to hidden_size
-        self.x_embed = PatchEmbed3D(input_size, patch_size, in_channels, hidden_size // 2, bias=True)
-        self.y_embed = PatchEmbed3D(input_size, patch_size, in_channels, hidden_size // 2, bias=True)
-        self.t_embed = TimestepEmbedder(hidden_size)
-
-        blocks = []
-        for i in range(depth):
-            shift = 0 if (i % 2 == 0) else window_size // 2  # shifted cubic windows
-            blocks.append(SwinIRBlock3D(hidden_size, num_heads, window_size, shift, mlp_ratio))
-        self.blocks = nn.ModuleList(blocks)
-
-        self.head = FinalLayer3D(hidden_size, patch_size, self.out_channels)
-        self._init_weights()
-
-    def _init_weights(self):
-        def _basic(m):
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-
-        self.apply(_basic)
-
-        for pe in [self.x_embed, self.y_embed]:
-            w = pe.proj.weight.data
-            nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-            if pe.proj.bias is not None:
-                nn.init.constant_(pe.proj.bias, 0)
-
-        nn.init.normal_(self.t_embed.mlp[0].weight, std=0.02)
-        nn.init.normal_(self.t_embed.mlp[2].weight, std=0.02)
-
-        for b in self.blocks:
-            nn.init.constant_(b.ada[-1].weight, 0)
-            nn.init.constant_(b.ada[-1].bias, 0)
-
-        nn.init.constant_(self.head.ada[-1].weight, 0)
-        nn.init.constant_(self.head.ada[-1].bias, 0)
-        nn.init.constant_(self.head.linear.weight, 0)
-        nn.init.constant_(self.head.linear.bias, 0)
-
-    def unpatchify(self, x, D, H, W):
-        # x: (N, T, p^3 * c) -> (N, c, D, H, W)
-        N, T, PPc = x.shape
+        # Token grid sizes (#tokens along each axis)
         p = self.patch_size
-        c = self.out_channels
-        d, h, w = D // p, H // p, W // p
-        assert d * h * w == T, f"Token count mismatch in unpatchify(3D): {d*h*w} != {T}"
-        assert PPc == (p ** 3) * c, f"Last dim should be p^3*c, got {PPc} vs {(p**3)*c}"
+        token_grid = tuple(Si // p[0] for Si in spatial)  # equal p enforced in unpatchify
+        assert _prod(token_grid) == z.shape[1], f"Token count mismatch: prod{token_grid} vs {z.shape[1]}"
 
-        x = x.view(N, d, h, w, p, p, p, c)                # (N, d, h, w, pd, ph, pw, c)
-        x = x.permute(0, 7, 1, 4, 2, 5, 3, 6).contiguous() # (N, c, d, pd, h, ph, w, pw)
-        x = x.view(N, c, D, H, W)
-        return x
+        # Timestep conditioning
+        c = self.t_embed(t)                # (N, hidden)
 
-    def forward(self, x, t, conditioned):
-        # x, conditioned: (N, C, D, H, W); t: (N,)
-        assert len(x.shape) == 5, f"x has incorrect shape {x.shape}"
-        assert len(conditioned.shape) == 5, f"`conditioned` has incorrect shape {conditioned.shape}"
-        N, C, D, H, W = x.shape
-        ex = self.x_embed(x)            # (N, T, D/2)
-        ey = self.y_embed(conditioned)  # (N, T, D/2)
-        z = torch.cat([ex, ey], dim=-1) # (N, T, Dtot)
-        Dp, Hp, Wp = D // self.patch_size, H // self.patch_size, W // self.patch_size
-        assert Dp * Hp * Wp == z.shape[1], f"Token count mismatch: {Dp*Hp*Wp} vs {z.shape[1]}"
-        c = self.t_embed(t)             # (N, Dtot)
-
+        # Transformer blocks
         for blk in self.blocks:
-            z = blk(z, c, Dp, Hp, Wp)
+            z = blk(z, c, *token_grid)
 
-        out = self.head(z, c)           # (N, T, p^3*outC)
-        return self.unpatchify(out, D, H, W)
+        # Head and unpatchify
+        out_tokens = self.head(z, c)       # (N, T, p^k * out_channels)
+        return self._unpatchify(out_tokens, spatial)
 
-# Config helpers (3D)
-def SwinIRDiT3D_B_2(**kw):  return SwinIRDiT3D(depth=12, hidden_size=768,  patch_size=2, num_heads=12, **kw)
-def SwinIRDiT3D_M_2(**kw):  return SwinIRDiT3D(depth=12, hidden_size=1024, patch_size=2, num_heads=12, **kw)
-def SwinIRDiT3D_L_2(**kw):  return SwinIRDiT3D(depth=24, hidden_size=1024, patch_size=2, num_heads=16, **kw)
-def SwinIRDiT3D_XL_2(**kw): return SwinIRDiT3D(depth=28, hidden_size=1152, patch_size=2, num_heads=16, **kw)
 
-SwinIRDiT3D_models = {
-    "SwinIRDiT3D-B/2": SwinIRDiT3D_B_2,
-    "SwinIRDiT3D-M/2": SwinIRDiT3D_M_2,
-    "SwinIRDiT3D-L/2": SwinIRDiT3D_L_2,
-    "SwinIRDiT3D-XL/2": SwinIRDiT3D_XL_2,
-}
+# ---- WiDiT presets ----
+def WiDiT2D_B_2(**kw):   return Widit(spatial_dim=2, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
+def WiDiT2D_M_2(**kw):   return Widit(spatial_dim=2, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_L_2(**kw):   return Widit(spatial_dim=2, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_XL_2(**kw):  return Widit(spatial_dim=2, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
 
-__all__ = [
-    # shared
-    "TimestepEmbedder",
+def WiDiT3D_B_2(**kw):   return Widit(spatial_dim=3, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
+def WiDiT3D_M_2(**kw):   return Widit(spatial_dim=3, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_L_2(**kw):   return Widit(spatial_dim=3, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_XL_2(**kw):  return Widit(spatial_dim=3, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
+
+
+PRESETS = {
     # 2D
-    "SwinIRDiT", "SwinIRBlock", "WindowAttention", "FinalLayer",
-    "SwinIRDiT_B_2", "SwinIRDiT_L_2", "SwinIRDiT_XL_2", "SwinIRDiT_models",
+    "WiDiT-B/2":  WiDiT2D_B_2,
+    "WiDiT-M/2":  WiDiT2D_M_2,
+    "WiDiT-L/2":  WiDiT2D_L_2,
+    "WiDiT-XL/2": WiDiT2D_XL_2,
     # 3D
-    "SwinIRDiT3D", "SwinIRBlock3D", "WindowAttention3D", "FinalLayer3D",
-    "SwinIRDiT3D_B_2", "SwinIRDiT3D_M_2", "SwinIRDiT3D_L_2", "SwinIRDiT3D_XL_2", "SwinIRDiT3D_models",
-]
+    "WiDiT3D-B/2":  WiDiT3D_B_2,
+    "WiDiT3D-M/2":  WiDiT3D_M_2,
+    "WiDiT3D-L/2":  WiDiT3D_L_2,
+    "WiDiT3D-XL/2": WiDiT3D_XL_2,
+}

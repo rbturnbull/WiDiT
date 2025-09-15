@@ -8,15 +8,6 @@ from typing import Iterable, Sequence
 import torch
 import torch.nn as nn
 
-__all__ = [
-    "_to_sizes",
-    "_prod",
-    "_build_rel_pos_index",
-    "window_partition_nd",
-    "window_unpartition_nd",
-    "WindowAttention",
-]
-
 
 def _to_sizes(ws: int | Sequence[int], spatial_dim: int) -> tuple[int, ...]:
     if isinstance(ws, int):
