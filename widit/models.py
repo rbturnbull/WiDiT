@@ -1,4 +1,3 @@
-# swinir_dit.py
 import torch
 import torch.nn as nn
 from timm.models.vision_transformer import PatchEmbed, Mlp
