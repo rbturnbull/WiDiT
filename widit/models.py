@@ -72,7 +72,6 @@ class WiDiT(nn.Module):
             in_chans=in_channels,
             embed_dim=half_hidden,
             bias=True,
-            spatial_dim=self.spatial_dims,
         )
         self.conditioned_patch_embed = PatchEmbed(
             input_size=input_size,
@@ -80,7 +79,6 @@ class WiDiT(nn.Module):
             in_chans=in_channels,
             embed_dim=half_hidden,
             bias=True,
-            spatial_dim=self.spatial_dims,
         )
 
         # Optional conditioning via timestep embedding → match token dim (hidden_size)
@@ -139,25 +137,8 @@ class WiDiT(nn.Module):
         nn.init.constant_(self.final.linear.weight, 0)
         nn.init.constant_(self.final.linear.bias,   0)
 
-        # PatchEmbed init: xavier on conv weights, zero bias
-        def _init_patch_embed(embed: PatchEmbed) -> None:
-            if embed.patch_embedding_2d is not None:
-                proj = embed.patch_embedding_2d.proj  # timm Conv2d
-                w = proj.weight.data
-                nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-                if proj.bias is not None:
-                    nn.init.constant_(proj.bias, 0)
-            elif embed.patch_embedding_3d is not None:
-                proj = embed.patch_embedding_3d  # Conv3d
-                w = proj.weight.data
-                nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-                if proj.bias is not None:
-                    nn.init.constant_(proj.bias, 0)
-
-        _init_patch_embed(self.input_patch_embed)
-        _init_patch_embed(self.conditioned_patch_embed)
-
-    # ------------------- unpatchify (N-D, equal patch per axis) -------------------
+        self.input_patch_embed.init_weights()
+        self.conditioned_patch_embed.init_weights()
 
     def _unpatchify(self, token_tensor: torch.Tensor, spatial_sizes: tuple[int, ...]) -> torch.Tensor:
         """

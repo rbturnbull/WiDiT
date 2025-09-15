@@ -38,7 +38,6 @@ class PatchEmbed(nn.Module):
         in_chans: int,
         embed_dim: int,
         bias: bool = True,
-        spatial_dim: int | None = None,
     ):
         super().__init__()
         self.input_size = input_size
@@ -46,43 +45,34 @@ class PatchEmbed(nn.Module):
         self.in_chans = in_chans
         self.embed_dim = embed_dim
         self.bias = bias
-        self.spatial_dim = spatial_dim
 
         # Lazy init: build only the required path (2D or 3D) when needed.
         self.patch_embedding_2d: PatchEmbed2D | None = None
         self.patch_embedding_3d: nn.Conv3d | None = None
 
-        # If spatial_dim is fixed, eagerly build the corresponding path.
-        if spatial_dim == 2:
-            self._build_2d_patch_embedding()
-        elif spatial_dim == 3:
-            self._build_3d_patch_embedding()
-        elif spatial_dim is not None:
-            raise ValueError(f"spatial_dim must be 2, 3, or None; got {spatial_dim}")
-
     # --- builders ---
 
-    def _build_2d_patch_embedding(self) -> None:
-        if self.patch_embedding_2d is not None:
-            return
-        patch_size_2d = _to_tuple(self.patch_size, 2)
-        img_size = self.input_size if isinstance(self.input_size, (int, tuple, list)) else None
-        self.patch_embedding_2d = PatchEmbed2D(
-            img_size=img_size,
-            patch_size=patch_size_2d,
-            in_chans=self.in_chans,
-            embed_dim=self.embed_dim,
-            bias=self.bias,
-            flatten=True,  # (N, T, embed_dim)
-        )
+    def _build_2d_patch_embedding(self) -> PatchEmbed2D:
+        if self.patch_embedding_2d is None:
+            patch_size_2d = _to_tuple(self.patch_size, 2)
+            img_size = self.input_size if isinstance(self.input_size, (int, tuple, list)) else None
+            self.patch_embedding_2d = PatchEmbed2D(
+                img_size=img_size,
+                patch_size=patch_size_2d,
+                in_chans=self.in_chans,
+                embed_dim=self.embed_dim,
+                bias=self.bias,
+                flatten=True,  # (N, T, embed_dim)
+            )
+        return self.patch_embedding_2d
 
     def _build_3d_patch_embedding(self) -> None:
-        if self.patch_embedding_3d is not None:
-            return
-        patch_size_3d = _to_tuple(self.patch_size, 3)
-        self.patch_embedding_3d = nn.Conv3d(
-            self.in_chans, self.embed_dim, kernel_size=patch_size_3d, stride=patch_size_3d, bias=self.bias
-        )
+        if self.patch_embedding_3d is None:
+            patch_size_3d = _to_tuple(self.patch_size, 3)
+            self.patch_embedding_3d = nn.Conv3d(
+                self.in_chans, self.embed_dim, kernel_size=patch_size_3d, stride=patch_size_3d, bias=self.bias
+            )
+        return self.patch_embedding_3d
 
     # --- forwards ---
 
@@ -98,16 +88,12 @@ class PatchEmbed(nn.Module):
         return x
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Determine spatial dimensionality for this input
-        if self.spatial_dim is None:
-            if x.ndim == 4:   # (N, C, H, W)
-                spatial_dims = 2
-            elif x.ndim == 5: # (N, C, D, H, W)
-                spatial_dims = 3
-            else:
-                raise ValueError(f"Unsupported input rank {x.ndim}; expected 4 (2D) or 5 (3D).")
+        if x.ndim == 4:   # (N, C, H, W)
+            spatial_dims = 2
+        elif x.ndim == 5: # (N, C, D, H, W)
+            spatial_dims = 3
         else:
-            spatial_dims = self.spatial_dim
+            raise ValueError(f"Unsupported input rank {x.ndim}; expected 4 (2D) or 5 (3D).")
 
         if spatial_dims == 2:
             assert x.ndim == 4, f"Expected (N,C,H,W) for 2D, got shape {tuple(x.shape)}"
@@ -115,10 +101,29 @@ class PatchEmbed(nn.Module):
                 self._build_2d_patch_embedding()
             return self._forward_2d(x)
 
-        if spatial_dims == 3:
-            assert x.ndim == 5, f"Expected (N,C,D,H,W) for 3D, got shape {tuple(x.shape)}"
-            if self.patch_embedding_3d is None:
-                self._build_3d_patch_embedding()
-            return self._forward_3d(x)
+        # spatial_dims == 3
+        assert x.ndim == 5, f"Expected (N,C,D,H,W) for 3D, got shape {tuple(x.shape)}"
+        if self.patch_embedding_3d is None:
+            self._build_3d_patch_embedding()
+        return self._forward_3d(x)
 
-        raise ValueError(f"spatial_dim must be 2 or 3, got {spatial_dims}")
+    def init_weights(self) -> None:
+        """
+        Xavier-uniform on projection weights; zero bias if present.
+        Works for both 2D (timm PatchEmbed) and 3D (Conv3d) paths.
+        """
+        # If the 2D path is constructed
+        if getattr(self, "patch_embedding_2d", None) is not None:
+            proj = self.patch_embedding_2d.proj  # Conv2d inside timm PatchEmbed
+            w = proj.weight
+            nn.init.xavier_uniform_(w.view(w.shape[0], -1))
+            if proj.bias is not None:
+                nn.init.constant_(proj.bias, 0)
+
+        # If the 3D path is constructed
+        if getattr(self, "patch_embedding_3d", None) is not None:
+            proj3d = self.patch_embedding_3d  # Conv3d
+            w3 = proj3d.weight
+            nn.init.xavier_uniform_(w3.view(w3.shape[0], -1))
+            if proj3d.bias is not None:
+                nn.init.constant_(proj3d.bias, 0)
