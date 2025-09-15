@@ -20,6 +20,7 @@ classifiers = [
 [tool.poetry.dependencies]
 python = ">=3.10,<3.13"
 torch = "^2.8.0"
+timm = "^1.0.19"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=6.2.5"
