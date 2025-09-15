@@ -1,9 +1,7 @@
-# tests/test_models.py
 import pytest
 import torch
 
-# Adjust these to match your package layout
-from widit.models import WiDiT, PRESETS
+from widit import WiDiT, PRESETS
 
 
 def _rand_2d(n=2, c=1, h=16, w=12):

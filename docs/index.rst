@@ -17,8 +17,6 @@ Sliding Windows Diffusion Transformer (2D and 3D)
    :caption: Contents:
 
    quickstart
-   api
-   cli
    credits
 
 Indices and tables
