@@ -1,4 +1,3 @@
-
 from typing import Sequence
 
 import torch
@@ -16,53 +15,68 @@ from .window import (
 
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-    # x: (N, T, C), shift/scale: (N, C)
+    """
+    Apply adaLN-style modulation to a sequence of tokens.
+
+    Args:
+      x:     (batch, tokens, channels)
+      shift: (batch, channels)
+      scale: (batch, channels)
+    """
     return x * (1 + scale.unsqueeze(1)) + shift.unsqueeze(1)
 
 
-def _pad_channels_last(x: torch.Tensor, pads: tuple[int, ...]) -> torch.Tensor:
+def _pad_channels_last(x: torch.Tensor, pads_per_axis: tuple[int, ...]) -> torch.Tensor:
     """
-    Pad an (N, S1, S2, ..., Sk, C) tensor by pads=(p1,...,pk) on the positive side of each spatial dim.
-    F.pad expects channels-first ordering, so we permute to N,C,*, pad, then permute back.
+    Pad an (N, S1, S2, ..., Sk, C) tensor on the positive side of each spatial dim.
+    Internally swaps to channels-first for F.pad, then swaps back.
+
+    Args:
+      x:            (N, S1, S2, ..., Sk, C)
+      pads_per_axis: tuple of length k with right-side padding for each axis
     """
-    if not any(pads):
+    if not any(pads_per_axis):
         return x
-    k = len(pads)
-    # to N,C,*
-    x_cf = x.permute(0, k + 1, *range(1, k + 1))  # (N, C, S1, ..., Sk)
-    # Build pad tuple for F.pad: (..., S1) pairs in reverse order
-    pad_pairs = []
-    for p in reversed(pads):
+    k = len(pads_per_axis)
+
+    # To N,C,*
+    x_nchw = x.permute(0, k + 1, *range(1, k + 1))  # (N, C, S1, ..., Sk)
+
+    # Build pad tuple for F.pad in reverse spatial order: (..., S1) pairs
+    pad_pairs: list[int] = []
+    for p in reversed(pads_per_axis):
         pad_pairs.extend([0, p])  # (left=0, right=p)
-    x_cf = F.pad(x_cf, tuple(pad_pairs))
-    # back to channels-last
-    x = x_cf.permute(0, *range(2, k + 2), 1)
+    x_nchw = F.pad(x_nchw, tuple(pad_pairs))
+
+    # Back to channels-last
+    x = x_nchw.permute(0, *range(2, k + 2), 1)
     return x
 
 
-def _roll_channels_last(x: torch.Tensor, shifts: Sequence[int], invert: bool = False) -> torch.Tensor:
+def _roll_channels_last(x: torch.Tensor, shift_sizes: Sequence[int], invert: bool = False) -> torch.Tensor:
     """
-    Roll along spatial dims (N, S1, ..., Sk, C). If invert=True, rolls in the opposite direction.
+    Roll along the spatial dims of a channels-last tensor (N, S1, ..., Sk, C).
+    If invert=True, rolls in the opposite direction.
     """
-    k = len(shifts)
-    if all(s == 0 for s in shifts):
+    k = len(shift_sizes)
+    if all(s == 0 for s in shift_sizes):
         return x
-    s = tuple((-si if not invert else si) for si in shifts)
+    shifts = tuple((-s if not invert else s) for s in shift_sizes)
     dims = tuple(range(1, k + 1))
-    return torch.roll(x, shifts=s, dims=dims)
+    return torch.roll(x, shifts=shifts, dims=dims)
 
 
 class WiDiTBlock(nn.Module):
     """
-    N-D windowed attention + MLP with adaLN-Zero conditioning; optional ND shift.
+    N-D windowed attention + MLP with adaLN-Zero conditioning; optional N-D Swin shift.
 
     Args:
-        dim: channel dimension per token
-        num_heads: attention heads
-        window_size: int or sequence per axis (ws1,...,wsk)
-        shift_size: int or sequence per axis (defaults to 0 or ws_i//2 typically)
-        mlp_ratio: hidden multiplier for MLP
-        spatial_dim: number of spatial axes (2 for 2D, 3 for 3D)
+        dim:          token channel dimension
+        num_heads:    attention heads
+        window_size:  int or per-axis sequence (w1, ..., wk)
+        shift_size:   int or per-axis sequence (defaults to 0 or w_i//2 typically)
+        mlp_ratio:    hidden multiplier for MLP
+        spatial_dim:  number of spatial axes (2 for 2D, 3 for 3D)
     """
     def __init__(
         self,
@@ -74,102 +88,141 @@ class WiDiTBlock(nn.Module):
         spatial_dim: int = 2,
     ):
         super().__init__()
-        self.dim = dim
-        self.k = spatial_dim
-        self.ws: tuple[int, ...] = _to_sizes(window_size, self.k)
-        self.shift: tuple[int, ...] = _to_sizes(shift_size, self.k)
+        self.channels = dim
+        self.spatial_dims = spatial_dim
+        self.window_sizes: tuple[int, ...] = _to_sizes(window_size, self.spatial_dims)
+        self.shift_sizes: tuple[int, ...] = _to_sizes(shift_size, self.spatial_dims)
 
-        self.norm1 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-        self.attn = WindowAttention(dim, self.ws, num_heads, spatial_dim=self.k, qkv_bias=True)
-        self.norm2 = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.pre_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+        self.attn = WindowAttention(dim, self.window_sizes, num_heads, spatial_dim=self.spatial_dims, qkv_bias=True)
+        self.pre_mlp_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
+
         self.mlp = Mlp(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
             act_layer=lambda: nn.GELU(approximate="tanh"),
             drop=0,
         )
-        # shift/scale/gate x2 (msa + mlp)
-        self.ada = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim, bias=True))
 
-    def forward(self, x_seq: torch.Tensor, c: torch.Tensor, *grid_sizes: int) -> torch.Tensor:
+        # AdaLN-Zero conditioner -> produces shift/scale/gate for MSA and MLP (6 * C)
+        self.adaln = nn.Sequential(nn.SiLU(), nn.Linear(dim, 6 * dim, bias=True))
+
+    def forward(
+        self,
+        tokens: torch.Tensor,
+        timestep_embedding: torch.Tensor | None = None,
+        *token_grid_sizes: int,
+    ) -> torch.Tensor:
         """
-        x_seq: (N, T, C), where T == prod(grid_sizes)
-        c:     (N, C) conditioning vector (timestep embedding projected to dim)
-        grid_sizes: per-axis token grid (e.g., (Hp, Wp) or (Dp, Hp, Wp))
+        Args:
+          tokens:            (N, T, C) token sequence where T == prod(token_grid_sizes)
+          timestep_embedding:        (N, C) conditioning vector (e.g., timestep embedding projected to C). Optional.
+          token_grid_sizes:  per-axis token grid sizes, e.g. (Hp, Wp) or (Dp, Hp, Wp)
+
+        Returns:
+          (N, T, C)
         """
-        N, T, C = x_seq.shape
-        assert len(grid_sizes) == self.k, f"Expected {self.k} grid sizes, got {len(grid_sizes)}"
-        assert _prod(grid_sizes) == T, f"Token/grid mismatch: prod{grid_sizes} != {T}"
+        batch_size, num_tokens, channels = tokens.shape
+        assert channels == self.channels, f"Channel mismatch: got {channels}, expected {self.channels}"
+        assert len(token_grid_sizes) == self.spatial_dims, \
+            f"Expected {self.spatial_dims} grid sizes, got {len(token_grid_sizes)}"
+        assert _prod(token_grid_sizes) == num_tokens, \
+            f"Token/grid mismatch: prod{token_grid_sizes} != {num_tokens}"
 
-        ws = self.ws
-        shifts = self.shift
+        window_sizes = self.window_sizes
+        shift_sizes = self.shift_sizes
 
-        # Unpack adaLN-Zero params
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.ada(c).chunk(6, dim=1)
+        # ---- adaLN-Zero params ----
+        if timestep_embedding is None:
+            # No conditioning: behave like standard LN + Attn/MLP residuals
+            device = tokens.device
+            dtype = tokens.dtype
+            zeros = torch.zeros(batch_size, channels, device=device, dtype=dtype)
+            ones  = torch.ones(batch_size, channels, device=device, dtype=dtype)
+            shift_attn, scale_attn, gate_attn = zeros, zeros, ones
+            shift_mlp,  scale_mlp,  gate_mlp  = zeros, zeros, ones
+        else:
+            shift_attn, scale_attn, gate_attn, shift_mlp, scale_mlp, gate_mlp = \
+                self.adaln(timestep_embedding).chunk(6, dim=1)
 
         # (N, S1, ..., Sk, C)
-        x = x_seq.view(N, *grid_sizes, C)
+        x_spatial = tokens.view(batch_size, *token_grid_sizes, channels)
 
         # Pad to multiples of window sizes
-        pads = tuple((w - Si % w) % w for Si, w in zip(grid_sizes, ws))
-        if any(pads):
-            x = _pad_channels_last(x, pads)
-        padded_sizes = tuple(Si + pi for Si, pi in zip(grid_sizes, pads))
+        pads_per_axis = tuple((w - Si % w) % w for Si, w in zip(token_grid_sizes, window_sizes))
+        if any(pads_per_axis):
+            x_spatial = _pad_channels_last(x_spatial, pads_per_axis)
+        padded_grid = tuple(Si + pi for Si, pi in zip(token_grid_sizes, pads_per_axis))
 
-        # Optional ND shift (Swin-style)
-        if any(shifts):
-            x = _roll_channels_last(x, shifts, invert=False)
+        # Optional N-D Swin shift
+        if any(shift_sizes):
+            x_spatial = _roll_channels_last(x_spatial, shift_sizes, invert=False)
 
-        # Window partition -> (N*nW, *ws, C) -> tokens per window
-        x_win = window_partition_nd(x, ws)
-        Tw = self.attn.tokens_per_window()
-        x_win = x_win.view(-1, Tw, C)
+        # Window partition -> (N*nW, *ws, C) -> window tokens
+        windows = window_partition_nd(x_spatial, window_sizes)
+        tokens_per_window = _prod(window_sizes)
+        windows = windows.view(-1, tokens_per_window, channels)
 
         # Repeat conditioning per window
-        nW = _prod(Si // w for Si, w in zip(padded_sizes, ws))
-        shift_msa_w = shift_msa.repeat_interleave(nW, dim=0)
-        scale_msa_w = scale_msa.repeat_interleave(nW, dim=0)
-        gate_msa_w  = gate_msa.repeat_interleave(nW, dim=0)
+        num_windows = _prod(Si // w for Si, w in zip(padded_grid, window_sizes))
+        shift_attn_w = shift_attn.repeat_interleave(num_windows, dim=0)
+        scale_attn_w = scale_attn.repeat_interleave(num_windows, dim=0)
+        gate_attn_w  = gate_attn.repeat_interleave(num_windows, dim=0)
 
-        # Attention (+ adaLN-Zero)
-        h = self.norm1(x_win)
-        h = modulate(h, shift_msa_w, scale_msa_w)
+        # --- MSA + adaLN-Zero ---
+        h = self.pre_attn_norm(windows)
+        h = modulate(h, shift_attn_w, scale_attn_w)
         h = self.attn(h)
-        x_win = x_win + gate_msa_w.unsqueeze(1) * h
+        windows = windows + gate_attn_w.unsqueeze(1) * h
 
         # Merge windows back
-        x = window_unpartition_nd(x_win.view(-1, *ws, C), ws, *padded_sizes)
+        x_spatial = window_unpartition_nd(windows.view(-1, *window_sizes, channels),
+                                          window_sizes, *padded_grid)
 
         # Undo shift and crop padding
-        if any(shifts):
-            x = _roll_channels_last(x, shifts, invert=True)
-        if any(pads):
-            # crop each spatial axis back to original size
-            slicer = [slice(None)] + [slice(0, Si) for Si in grid_sizes] + [slice(None)]
-            x = x[tuple(slicer)]
+        if any(shift_sizes):
+            x_spatial = _roll_channels_last(x_spatial, shift_sizes, invert=True)
+        if any(pads_per_axis):
+            slicer = [slice(None)] + [slice(0, Si) for Si in token_grid_sizes] + [slice(None)]
+            x_spatial = x_spatial[tuple(slicer)]
 
-        # MLP (+ adaLN-Zero)
-        x = x.contiguous().view(N, T, C)
-        h = self.norm2(x)
+        # --- MLP + adaLN-Zero ---
+        tokens = x_spatial.contiguous().view(batch_size, num_tokens, channels)
+        h = self.pre_mlp_norm(tokens)
         h = modulate(h, shift_mlp, scale_mlp)
-        x = x + gate_mlp.unsqueeze(1) * self.mlp(h)
-        return x
+        tokens = tokens + gate_mlp.unsqueeze(1) * self.mlp(h)
+        return tokens
 
 
 class WiDiTFinalLayer(nn.Module):
     """
-    ND final projection with adaLN-Zero:
-      x: (N, T, C) -> linear to (N, T, (p^k) * out_channels)
+    N-D final projection with adaLN-Zero:
+      tokens: (N, T, C) -> linear -> (N, T, (p^k) * out_channels)
     """
     def __init__(self, hidden_size: int, patch_size: int, out_channels: int, spatial_dim: int):
         super().__init__()
         self.norm = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.ada = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True))
-        self.p = patch_size
-        self.k = spatial_dim
+        # Adaptive Layer Norm
+        self.adaln = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 2 * hidden_size, bias=True))
+        self.patch_size = patch_size
+        self.spatial_dims = spatial_dim
         self.out_channels = out_channels
         self.linear = nn.Linear(hidden_size, (patch_size ** spatial_dim) * out_channels, bias=True)
 
-    def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        shift, scale = self.ada(c).chunk(2, dim=1)
-        return self.linear(modulate(self.norm(x), shift, scale))
+    def forward(self, tokens: torch.Tensor, timestep_embedding: torch.Tensor | None = None) -> torch.Tensor:
+        """
+        Args:
+          tokens:     (N, T, C)
+          timestep_embedding: (N, C) optional conditioning vector (e.g., timestep embedding projected to C)
+
+        Returns:
+          (N, T, (patch_size^spatial_dims) * out_channels)
+        """
+        if timestep_embedding is None:
+            batch_size, _, channels = tokens.shape
+            device, dtype = tokens.device, tokens.dtype
+            shift = torch.zeros(batch_size, channels, device=device, dtype=dtype)
+            scale = torch.zeros(batch_size, channels, device=device, dtype=dtype)
+        else:
+            shift, scale = self.adaln(timestep_embedding).chunk(2, dim=1)
+        return self.linear(modulate(self.norm(tokens), shift, scale))

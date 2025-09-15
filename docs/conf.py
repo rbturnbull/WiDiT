@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.abspath(".."))
 # -- Project information -----------------------------------------------------
 
 project = "WiDiT"
-copyright = "2022, Robert Turnbull"
+copyright = "2025, Robert Turnbull"
 author = "Robert Turnbull"
 
 # The full version, including alpha/beta/rc tags
@@ -41,7 +41,6 @@ extensions = [
     "sphinx.ext.coverage",
     "sphinx.ext.napoleon",
     "sphinx_copybutton",
-    "sphinx_click",
 ]
 
 # Add any paths that contain templates here, relative to this directory.
