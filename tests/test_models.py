@@ -3,7 +3,7 @@ import pytest
 import torch
 
 # Adjust these to match your package layout
-from widit.models import Widit, PRESETS
+from widit.models import WiDiT, PRESETS
 
 
 def _rand_2d(n=2, c=1, h=16, w=12):
@@ -29,7 +29,7 @@ def test_widit_2d_forward_shapes_and_grad(learn_sigma):
     torch.manual_seed(0)
     x, t, cond = _rand_2d(n=2, c=3, h=16, w=12)  # grid = (8,6)
 
-    model = Widit(
+    model = WiDiT(
         spatial_dim=2,
         input_size=(16, 12),
         patch_size=2,
@@ -59,7 +59,7 @@ def test_widit_2d_tuple_window_and_padding():
     torch.manual_seed(0)
     # Choose H,W s.t. token grid (H/p, W/p) is NOT a multiple of window -> triggers padding.
     x, t, cond = _rand_2d(n=1, c=2, h=18, w=14)  # p=2 -> grid 9x7
-    model = Widit(
+    model = WiDiT(
         spatial_dim=2,
         input_size=(18, 14),
         patch_size=2,
@@ -82,7 +82,7 @@ def test_widit_3d_forward_shapes_and_grad(learn_sigma):
     torch.manual_seed(0)
     x, t, cond = _rand_3d(n=2, c=1, d=8, h=8, w=6)  # p=2 -> grid 4x4x3
 
-    model = Widit(
+    model = WiDiT(
         spatial_dim=3,
         input_size=(8, 8, 6),
         patch_size=2,
@@ -109,7 +109,7 @@ def test_widit_3d_nonuniform_window_padding():
     torch.manual_seed(0)
     # Make dims divisible by patch_size=2 to avoid conv3d flooring.
     x, t, cond = _rand_3d(n=1, c=2, d=10, h=10, w=8)  # grid 5x5x4
-    model = Widit(
+    model = WiDiT(
         spatial_dim=3,
         input_size=(10, 10, 8),
         patch_size=2,
@@ -131,7 +131,7 @@ def test_widit_cuda_if_available():
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
     x, t, cond = _rand_2d(n=2, c=1, h=16, w=16)
-    model = Widit(
+    model = WiDiT(
         spatial_dim=2,
         input_size=(16, 16),
         patch_size=2,
@@ -152,13 +152,13 @@ def test_widit_cuda_if_available():
 
 def test_widit_bad_spatial_dim_asserts():
     with pytest.raises(AssertionError):
-        _ = Widit(spatial_dim=4)  # only 2 or 3 supported
+        _ = WiDiT(spatial_dim=4)  # only 2 or 3 supported
 
 
 def test_widit_mismatched_conditioned_shape_raises():
     x, t, cond = _rand_2d(n=1, c=1, h=8, w=8)
     cond = cond[:, :, :7, :8]  # wrong H
-    model = Widit(
+    model = WiDiT(
         spatial_dim=2,
         input_size=(8, 8),
         patch_size=2,

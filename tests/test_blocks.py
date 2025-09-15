@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from widit.blocks import WiditBlock, WiditFinalLayer
+from widit.blocks import WiDiTBlock, WiDiTFinalLayer
 from widit.window import _prod
 
 
@@ -12,7 +12,7 @@ def _rand_tokens(N, sizes, C):
     return x, T
 
 
-# -------------------- WiditBlock (2D) --------------------
+# -------------------- WiDiTBlock (2D) --------------------
 
 @pytest.mark.parametrize("sizes,ws,shift", [
     ((8, 8), (4, 4), (0, 0)),      # divisible, no shift
@@ -25,7 +25,7 @@ def test_widit_block_2d_forward_backward(sizes, ws, shift):
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    blk = WiditBlock(dim=C, num_heads=4, window_size=ws, shift_size=shift, mlp_ratio=4.0, spatial_dim=2)
+    blk = WiDiTBlock(dim=C, num_heads=4, window_size=ws, shift_size=shift, mlp_ratio=4.0, spatial_dim=2)
     out = blk(x, c, *sizes)
 
     assert out.shape == (N, T, C)
@@ -42,7 +42,7 @@ def test_widit_block_2d_token_grid_mismatch_raises():
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    blk = WiditBlock(dim=C, num_heads=2, window_size=(4, 4), spatial_dim=2)
+    blk = WiDiTBlock(dim=C, num_heads=2, window_size=(4, 4), spatial_dim=2)
     # pass wrong grid sizes on purpose
     with pytest.raises(AssertionError):
         blk(x, c, 7, 9)
@@ -58,13 +58,13 @@ def test_widit_block_2d_nonuniform_windows():
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    blk = WiditBlock(dim=C, num_heads=6, window_size=ws, shift_size=shift, spatial_dim=2)
+    blk = WiDiTBlock(dim=C, num_heads=6, window_size=ws, shift_size=shift, spatial_dim=2)
     out = blk(x, c, *sizes)
     assert out.shape == (N, T, C)
     (out.mean()).backward()
 
 
-# -------------------- WiditBlock (3D) --------------------
+# -------------------- WiDiTBlock (3D) --------------------
 
 @pytest.mark.parametrize("sizes,ws,shift", [
     ((6, 6, 6), (3, 3, 3), (0, 0, 0)),  # divisible, no shift
@@ -77,7 +77,7 @@ def test_widit_block_3d_forward_backward(sizes, ws, shift):
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    blk = WiditBlock(dim=C, num_heads=6, window_size=ws, shift_size=shift, mlp_ratio=3.0, spatial_dim=3)
+    blk = WiDiTBlock(dim=C, num_heads=6, window_size=ws, shift_size=shift, mlp_ratio=3.0, spatial_dim=3)
     out = blk(x, c, *sizes)
 
     assert out.shape == (N, T, C)
@@ -96,13 +96,13 @@ def test_widit_block_device_cuda_if_available():
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    blk = WiditBlock(dim=C, num_heads=4, window_size=ws, spatial_dim=2).cuda()
+    blk = WiDiTBlock(dim=C, num_heads=4, window_size=ws, spatial_dim=2).cuda()
     out = blk(x.cuda(), c.cuda(), *sizes)
     assert out.is_cuda
     assert out.shape == (N, T, C)
 
 
-# -------------------- WiditFinalLayer --------------------
+# -------------------- WiDiTFinalLayer --------------------
 
 @pytest.mark.parametrize("k,sizes,patch,outc", [
     (2, (8, 8), 2, 3),
@@ -114,7 +114,7 @@ def test_widit_final_layer_shapes_and_backward(k, sizes, patch, outc):
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    head = WiditFinalLayer(hidden_size=C, patch_size=patch, out_channels=outc, spatial_dim=k)
+    head = WiDiTFinalLayer(hidden_size=C, patch_size=patch, out_channels=outc, spatial_dim=k)
     out = head(x, c)
     expected_last = (patch ** k) * outc
     assert out.shape == (N, T, expected_last)
@@ -132,7 +132,7 @@ def test_widit_final_layer_cuda_if_available():
     x, T = _rand_tokens(N, sizes, C)
     c = torch.randn(N, C)
 
-    head = WiditFinalLayer(hidden_size=C, patch_size=2, out_channels=1, spatial_dim=2).cuda()
+    head = WiDiTFinalLayer(hidden_size=C, patch_size=2, out_channels=1, spatial_dim=2).cuda()
     out = head(x.cuda(), c.cuda())
     assert out.is_cuda
     assert out.shape == (N, T, (2 ** 2) * 1)

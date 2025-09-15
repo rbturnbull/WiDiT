@@ -52,7 +52,7 @@ def _roll_channels_last(x: torch.Tensor, shifts: Sequence[int], invert: bool = F
     return torch.roll(x, shifts=s, dims=dims)
 
 
-class WiditBlock(nn.Module):
+class WiDiTBlock(nn.Module):
     """
     N-D windowed attention + MLP with adaLN-Zero conditioning; optional ND shift.
 
@@ -156,7 +156,7 @@ class WiditBlock(nn.Module):
         return x
 
 
-class WiditFinalLayer(nn.Module):
+class WiDiTFinalLayer(nn.Module):
     """
     ND final projection with adaLN-Zero:
       x: (N, T, C) -> linear to (N, T, (p^k) * out_channels)

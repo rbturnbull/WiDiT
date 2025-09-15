@@ -2,6 +2,6 @@
 Command Line Interface Reference
 ================================
 
-.. click:: widit.apps:Widit.click
+.. click:: widit.apps:WiDiT.click
    :prog: widit
    :nested: full

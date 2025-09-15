@@ -4,16 +4,16 @@ import torch
 import torch.nn as nn
 
 from .patch import PatchEmbed
-from .blocks import WiditBlock, WiditFinalLayer
+from .blocks import WiDiTBlock, WiDiTFinalLayer
 from .timesteps import TimestepEmbedder
 from .window import _to_sizes, _prod
 
-class Widit(nn.Module):
+class WiDiT(nn.Module):
     """
     SwinIR-style DiT with N-D windowed attention (2D or 3D), no downsampling.
 
     Pipeline:
-      two PatchEmbeds (x, conditioned) -> concat tokens -> depth×(WiditBlock) -> WiditFinalLayer -> unpatchify
+      two PatchEmbeds (x, conditioned) -> concat tokens -> depth×(WiDiTBlock) -> WiDiTFinalLayer -> unpatchify
 
     Args:
       spatial_dim: 2 for 2D, 3 for 3D
@@ -82,7 +82,7 @@ class Widit(nn.Module):
         for i in range(depth):
             shift = shift_even if (i % 2 == 0) else shift_odd
             blocks.append(
-                WiditBlock(
+                WiDiTBlock(
                     dim=hidden_size,
                     num_heads=num_heads,
                     window_size=self.window_size,
@@ -94,7 +94,7 @@ class Widit(nn.Module):
         self.blocks = nn.ModuleList(blocks)
 
         # Head
-        self.head = WiditFinalLayer(
+        self.head = WiDiTFinalLayer(
             hidden_size=hidden_size,
             patch_size=self.patch_size[0] if self.k == 2 else self.patch_size[0],  # scalar p (same per-axis)
             out_channels=self.out_channels,
@@ -224,15 +224,15 @@ class Widit(nn.Module):
 
 
 # ---- WiDiT presets ----
-def WiDiT2D_B_2(**kw):   return Widit(spatial_dim=2, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
-def WiDiT2D_M_2(**kw):   return Widit(spatial_dim=2, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT2D_L_2(**kw):   return Widit(spatial_dim=2, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT2D_XL_2(**kw):  return Widit(spatial_dim=2, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_B_2(**kw):   return WiDiT(spatial_dim=2, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
+def WiDiT2D_M_2(**kw):   return WiDiT(spatial_dim=2, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_L_2(**kw):   return WiDiT(spatial_dim=2, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_XL_2(**kw):  return WiDiT(spatial_dim=2, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
 
-def WiDiT3D_B_2(**kw):   return Widit(spatial_dim=3, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
-def WiDiT3D_M_2(**kw):   return Widit(spatial_dim=3, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT3D_L_2(**kw):   return Widit(spatial_dim=3, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT3D_XL_2(**kw):  return Widit(spatial_dim=3, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_B_2(**kw):   return WiDiT(spatial_dim=3, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
+def WiDiT3D_M_2(**kw):   return WiDiT(spatial_dim=3, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_L_2(**kw):   return WiDiT(spatial_dim=3, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_XL_2(**kw):  return WiDiT(spatial_dim=3, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
 
 
 PRESETS = {
