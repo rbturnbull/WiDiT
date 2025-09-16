@@ -1,6 +1,7 @@
-================================================================
-WiDiT
-================================================================
+
+.. image:: https://rbturnbull.github.io/WiDiT/_images/WiDiT-Banner.png
+   :alt: WiDiT banner
+   :align: center
 
 .. start-badges
 
@@ -23,12 +24,6 @@ WiDiT
 
 .. start-quickstart
 
-.. image:: https://rbturnbull.github.io/WiDiT/_images/WiDiT-Banner.png
-   :alt: WiDiT banner
-   :align: center
-
-WiDiT: Windowed Diffusion Transformer (2D/3D)
-=============================================
 
 WiDiT is a SwinIR-style DiT backbone that unifies **2D images** and **3D volumes**
 with N-D windowed attention, optional Swin shifts, and AdaLN-Zero conditioning.
