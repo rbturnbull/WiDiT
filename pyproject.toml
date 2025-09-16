@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "WiDiT"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Windowed Diffusion Transformer in 2D and 3D"
 authors = ["Robert Turnbull <robert.turnbull@unimelb.edu.au>"]
 license = "Apache-2.0"
@@ -8,7 +8,7 @@ readme = "README.rst"
 repository = "https://github.com/rbturnbull/widit/"
 documentation = "https://rbturnbull.github.io/widit"
 homepage = "https://github.com/rbturnbull/widit/"
-keywords = ["torchapp", "pytorch", "deep learning", "command-line interface"]
+keywords = ["pytorch", "deep learning", "transformer"]
 # For classifiers see https://pypi.org/classifiers/
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
