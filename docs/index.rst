@@ -3,14 +3,15 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to WiDiT's documentation!
-===========================================================
+.. image:: ./static/img/WiDiT-Banner.png
+   :alt: WiDiT banner
+   :align: center
 
 .. include:: ../README.rst
    :start-after: start-badges
    :end-before: end-badges
 
-Sliding Windows Diffusion Transformer (2D and 3D)
+WiDiT: Windowed Diffusion Transformer (2D/3D)
 
 .. toctree::
    :maxdepth: 2
