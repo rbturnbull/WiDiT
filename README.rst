@@ -31,7 +31,7 @@
 WiDiT is a SwinIR-style DiT backbone that unifies **2D images** and **3D volumes**
 with N-D windowed attention, optional Swin shifts, and AdaLN-Zero conditioning.
 
-- Single model class: :class:`widit.models.WiDiT`
+- Single model class: ``widit.models.WiDiT``
 - Optional timestep conditioning (pass ``timestep=None`` if unused)
 - Shared blocks for 2D/3D via N-D window partitioning
 - Presets for quick experiments in both 2D and 3D
@@ -52,6 +52,10 @@ Or
     pip install git+https://github.com/rbturnbull/widit.git
 
 WiDiT depends on ``torch`` and ``timm`` (for the 2D patch embedding path).
+
+.. warning::
+
+    WiDiT is currently in alpha testing phase. More updates are coming soon.
 
 
 Quick Start (2D)
@@ -138,7 +142,7 @@ using ``patch_size=2`` and Swin-style window attention:
 API Overview
 ------------
 
-``WiDiT`` (core model)
+```widit``` (core model)
 ~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
@@ -176,7 +180,7 @@ API Overview
 
 - ``timestep`` is **optional**. Pass ``None`` to disable AdaLN conditioning (the
   block falls back to standard LN + residual).
-- If provided, the model uses :class:`widit.timesteps.TimestepEmbedder` to produce
+- If provided, the model uses ``widit.timesteps.TimestepEmbedder`` to produce
   a per-sample vector projected to the token dimension.
 
 
@@ -185,10 +189,10 @@ Building Blocks
 
 These are used internally, but you can also import them for custom stacks.
 
-- :class:`widit.blocks.WiDiTBlock` – N-D windowed MSA + MLP with AdaLN-Zero
-- :class:`widit.blocks.WiDiTFinalLayer` – final projection head with AdaLN-Zero
-- :class:`widit.patch.PatchEmbed` – unified 2D/3D patch embedding
-- :class:`widit.timesteps.TimestepEmbedder` – sinusoidal → MLP conditioning
+- ``widit.blocks.WiDiTBlock`` – N-D windowed MSA + MLP with AdaLN-Zero
+- ``widit.blocks.WiDiTFinalLayer`` – final projection head with AdaLN-Zero
+- ``widit.patch.PatchEmbed`` – unified 2D/3D patch embedding
+- ``widit.timesteps.TimestepEmbedder`` – sinusoidal → MLP conditioning
 
 All of the above expose ``init_weights()`` so the model can initialize components
 cleanly (adaLN-Zero policy for blocks & head; Xavier for projections; Normal for
