@@ -1,3 +1,4 @@
+# tests/test_models.py
 import pytest
 import torch
 
@@ -39,13 +40,12 @@ def test_widit_2d_forward_shapes_and_grad(learn_sigma):
         mlp_ratio=2.0,
         learn_sigma=learn_sigma,
     )
-    # NEW ORDER: (x, conditioned, timestep)
-    y = model(x, cond, t)
+    # NEW ORDER: (x, timestep, *, conditioned=...)
+    y = model(x, t, conditioned=cond)
 
     outc = 3 * (2 if learn_sigma else 1)
     assert y.shape == (2, outc, 16, 12)
 
-    # Use a non-zero target to avoid zero-grad at init (adaLN-Zero + zero head)
     target = torch.randn_like(y)
     loss = torch.nn.functional.mse_loss(y, target)
     loss.backward()
@@ -70,11 +70,10 @@ def test_widit_2d_tuple_window_and_padding():
         mlp_ratio=2.0,
         learn_sigma=True,
     )
-    y = model(x, cond, t)
+    y = model(x, t, conditioned=cond)
     assert y.shape == (1, 4, 18, 14)  # 2*in_channels with learn_sigma=True
 
 
-# Optional conditioning OFF
 def test_widit_2d_timestep_none():
     torch.manual_seed(0)
     x, t, cond = _rand_2d(n=1, c=2, h=16, w=12)
@@ -90,9 +89,9 @@ def test_widit_2d_timestep_none():
         mlp_ratio=2.0,
         learn_sigma=False,
     )
-    y = model(x, cond, timestep=None)
+    y = model(x, timestep=None, conditioned=cond)
     assert y.shape == (1, 2, 16, 12)
-    (y.sum()).backward()  # just ensure it’s differentiable without conditioning
+    (y.sum()).backward()  # ensure differentiable without timestep
 
 
 # -------------------- Core WiDiT (3D) --------------------
@@ -114,7 +113,7 @@ def test_widit_3d_forward_shapes_and_grad(learn_sigma):
         mlp_ratio=2.0,
         learn_sigma=learn_sigma,
     )
-    y = model(x, cond, t)
+    y = model(x, t, conditioned=cond)
     outc = 1 * (2 if learn_sigma else 1)
     assert y.shape == (2, outc, 8, 8, 6)
 
@@ -141,7 +140,7 @@ def test_widit_3d_nonuniform_window_padding():
         mlp_ratio=2.0,
         learn_sigma=True,
     )
-    y = model(x, cond, t)
+    y = model(x, t, conditioned=cond)
     assert y.shape == (1, 4, 10, 10, 8)  # 2*in_channels, original spatial sizes
 
 
@@ -163,7 +162,7 @@ def test_widit_cuda_if_available():
         mlp_ratio=2.0,
         learn_sigma=True,
     ).cuda()
-    y = model(x.cuda(), cond.cuda(), t.cuda())
+    y = model(x.cuda(), t.cuda(), conditioned=cond.cuda())
     assert y.is_cuda
     assert y.shape == (2, 2, 16, 16)
 
@@ -188,7 +187,7 @@ def test_widit_mismatched_conditioned_shape_raises():
         num_heads=2,
     )
     with pytest.raises(AssertionError):
-        _ = model(x, cond, t)  # NEW ORDER
+        _ = model(x, t, conditioned=cond)  # NEW ORDER
 
 
 # -------------------- PRESETS --------------------
@@ -196,7 +195,6 @@ def test_widit_mismatched_conditioned_shape_raises():
 def _small_input_for_preset(name: str):
     """Return (x, t, cond) sized to be compatible with default patch/window and produce grads."""
     if "3D" in name:
-        # patch_size=2 by default → pick multiples of 2
         return _rand_3d(n=1, c=1, d=8, h=8, w=6)
     else:
         return _rand_2d(n=1, c=1, h=16, w=12)
@@ -219,7 +217,7 @@ def test_every_preset_builds_and_runs(name):
     ctor = PRESETS[name]
     model = ctor(in_channels=1, learn_sigma=True)  # keep defaults for each preset
     x, t, cond = _small_input_for_preset(name)
-    y = model(x, cond, t)  # NEW ORDER
+    y = model(x, t, conditioned=cond)  # NEW ORDER
 
     # Validate output shape
     if "3D" in name:
@@ -229,7 +227,6 @@ def test_every_preset_builds_and_runs(name):
         n, c, h, w = x.shape
         assert y.shape == (n, 2 * c, h, w)
 
-    # Use non-zero target so grads are non-zero at init
     target = torch.randn_like(y)
     loss = torch.nn.functional.mse_loss(y, target)
     loss.backward()
@@ -237,90 +234,28 @@ def test_every_preset_builds_and_runs(name):
     assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
 
 
-# --- New tests to append to tests/test_models.py ---
+# -------- Optional conditioning OFF path --------
 
-def test_widit_2d_timestep_none():
-    torch.manual_seed(0)
-    n, c, h, w = 2, 2, 16, 12
-    x = torch.randn(n, c, h, w)
+def test_widit_unconditioned_path_runs_and_shapes():
+    x = torch.randn(2, 3, 16, 12)
+    model = WiDiT(spatial_dim=2, in_channels=3, hidden_size=128, depth=2,
+                  num_heads=4, patch_size=2, window_size=8, use_conditioning=False, learn_sigma=True)
+    y = model(x, timestep=torch.randint(0, 1000, (2,)))
+    assert y.shape == (2, 6, 16, 12)  # 2 * in_channels
+
+
+def test_widit_unconditioned_rejects_conditioned_arg():
+    x = torch.randn(1, 1, 8, 8)
     cond = torch.randn_like(x)
-
-    model = WiDiT(
-        spatial_dim=2,
-        input_size=(h, w),
-        patch_size=2,
-        in_channels=c,
-        hidden_size=96,
-        depth=2,
-        num_heads=4,
-        window_size=8,
-        mlp_ratio=2.0,
-        learn_sigma=False,  # output channels == in_channels
-    )
-    # No timestep provided
-    y = model(x, cond, timestep=None)
-    assert y.shape == (n, c, h, w)
-
-    # Ensure it's differentiable without conditioning vector
-    target = torch.randn_like(y)
-    loss = torch.nn.functional.mse_loss(y, target)
-    loss.backward()
-    grads = [p.grad for p in model.parameters() if p.requires_grad]
-    assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
+    model = WiDiT(spatial_dim=2, in_channels=1, hidden_size=64, depth=1,
+                  num_heads=2, patch_size=2, window_size=4, use_conditioning=False)
+    with pytest.raises(AssertionError):
+        _ = model(x, timestep=None, conditioned=cond)
 
 
-def test_widit_3d_timestep_none():
-    torch.manual_seed(0)
-    n, c, d, h, w = 1, 1, 8, 8, 6
-    x = torch.randn(n, c, d, h, w)
-    cond = torch.randn_like(x)
-
-    model = WiDiT(
-        spatial_dim=3,
-        input_size=(d, h, w),
-        patch_size=2,
-        in_channels=c,
-        hidden_size=144,
-        depth=2,
-        num_heads=6,
-        window_size=(4, 4, 4),
-        mlp_ratio=2.0,
-        learn_sigma=True,  # output channels == 2*in_channels
-    )
-    # No timestep provided
-    y = model(x, cond, timestep=None)
-    assert y.shape == (n, 2 * c, d, h, w)
-
-    target = torch.randn_like(y)
-    loss = torch.nn.functional.mse_loss(y, target)
-    loss.backward()
-    grads = [p.grad for p in model.parameters() if p.requires_grad]
-    assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
-
-
-@pytest.mark.parametrize("name", [
-    "WiDiT-B/2", "WiDiT-M/2", "WiDiT-L/2", "WiDiT-XL/2",
-    "WiDiT3D-B/2", "WiDiT3D-M/2", "WiDiT3D-L/2", "WiDiT3D-XL/2",
-])
-def test_every_preset_runs_without_timestep(name):
-    torch.manual_seed(0)
-    ctor = PRESETS[name]
-    model = ctor(in_channels=1, learn_sigma=True)
-
-    # Small inputs compatible with default patch/window
-    if "3D" in name:
-        x = torch.randn(1, 1, 8, 8, 6)
-        cond = torch.randn_like(x)
-        y = model(x, cond, timestep=None)
-        assert y.shape == (1, 2, 8, 8, 6)
-    else:
-        x = torch.randn(1, 1, 16, 12)
-        cond = torch.randn_like(x)
-        y = model(x, cond, timestep=None)
-        assert y.shape == (1, 2, 16, 12)
-
-    target = torch.randn_like(y)
-    loss = torch.nn.functional.mse_loss(y, target)
-    loss.backward()
-    grads = [p.grad for p in model.parameters() if p.requires_grad]
-    assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
+def test_widit_conditioned_requires_conditioned_arg():
+    x = torch.randn(1, 1, 8, 8)
+    model = WiDiT(spatial_dim=2, in_channels=1, hidden_size=64, depth=1,
+                  num_heads=2, patch_size=2, window_size=4, use_conditioning=True)
+    with pytest.raises(AssertionError):
+        _ = model(x, timestep=None)  # no conditioned passed

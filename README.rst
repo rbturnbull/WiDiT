@@ -142,9 +142,6 @@ using ``patch_size=2`` and Swin-style window attention:
 API Overview
 ------------
 
-```widit``` (core model)
-~~~~~~~~~~~~~~~~~~~~~~
-
 .. code-block:: python
 
    WiDiT(

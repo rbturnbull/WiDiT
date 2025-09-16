@@ -13,24 +13,11 @@ class WiDiT(nn.Module):
     """
     SwinIR-style DiT with N-D windowed attention (2D or 3D), no downsampling.
 
-    Pipeline:
-      two PatchEmbeds (input, conditioned) -> concat tokens
-      -> depth × (WiDiTBlock)
-      -> WiDiTFinalLayer
-      -> unpatchify back to image/volume
-
-    Args:
-      spatial_dim:   2 for 2D, 3 for 3D
-      input_size:    kept for API parity; not required by forward
-      patch_size:    int or per-axis tuple
-      in_channels:   input channels
-      hidden_size:   token embedding dim (sum of input/conditioned embed dims)
-      depth:         number of transformer blocks
-      num_heads:     attention heads
-      window_size:   int or per-axis tuple for window attention
-      mlp_ratio:     MLP hidden multiplier
-      learn_sigma:   if True, predict mean+sigma (out_channels = 2*in_channels)
+    If `use_conditioning=True`, the model expects an additional conditioning image/volume
+    and uses two PatchEmbed streams concatenated along the token channel.
+    If `use_conditioning=False`, only the main input stream is used.
     """
+
     def __init__(
         self,
         *,
@@ -44,6 +31,7 @@ class WiDiT(nn.Module):
         window_size: int | Sequence[int] = 8,
         mlp_ratio: float = 4.0,
         learn_sigma: bool = True,
+        use_conditioning: bool = True,   # <— NEW
     ):
         super().__init__()
         assert spatial_dim in (2, 3), f"spatial_dim must be 2 or 3, got {spatial_dim}"
@@ -53,33 +41,46 @@ class WiDiT(nn.Module):
         self.in_channels = in_channels
         self.learn_sigma = learn_sigma
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.use_conditioning = use_conditioning
 
         # Normalize per-axis hyperparameters
         self.patch_size_per_axis = _to_sizes(patch_size, self.spatial_dims)
         self.window_size_per_axis = _to_sizes(window_size, self.spatial_dims)
 
-        # Embedding split sanity checks
-        half_hidden = hidden_size // 2
-        assert half_hidden * 2 == hidden_size, "hidden_size must be even (split evenly across the two patch embeds)."
+        # Attention sanity check
         assert (hidden_size % num_heads) == 0, (
             f"hidden_size ({hidden_size}) must be divisible by num_heads ({num_heads})"
         )
 
         # Patch embedders (channels-first inputs)
-        self.input_patch_embed = PatchEmbed(
-            input_size=input_size,
-            patch_size=self.patch_size_per_axis,
-            in_chans=in_channels,
-            embed_dim=half_hidden,
-            bias=True,
-        )
-        self.conditioned_patch_embed = PatchEmbed(
-            input_size=input_size,
-            patch_size=self.patch_size_per_axis,
-            in_chans=in_channels,
-            embed_dim=half_hidden,
-            bias=True,
-        )
+        if self.use_conditioning:
+            # split token dim evenly across the two streams
+            assert (hidden_size % 2) == 0, "hidden_size must be even when use_conditioning=True"
+            half_hidden = hidden_size // 2
+            self.input_patch_embed = PatchEmbed(
+                input_size=input_size,
+                patch_size=self.patch_size_per_axis,
+                in_chans=in_channels,
+                embed_dim=half_hidden,
+                bias=True,
+            )
+            self.conditioned_patch_embed = PatchEmbed(
+                input_size=input_size,
+                patch_size=self.patch_size_per_axis,
+                in_chans=in_channels,
+                embed_dim=half_hidden,
+                bias=True,
+            )
+        else:
+            # single stream uses full hidden_size
+            self.input_patch_embed = PatchEmbed(
+                input_size=input_size,
+                patch_size=self.patch_size_per_axis,
+                in_chans=in_channels,
+                embed_dim=hidden_size,
+                bias=True,
+            )
+            self.conditioned_patch_embed = None  # explicitly absent
 
         # Optional conditioning via timestep embedding → match token dim (hidden_size)
         self.timestep_embedder = TimestepEmbedder(hidden_size)
@@ -87,7 +88,6 @@ class WiDiT(nn.Module):
         # Transformer blocks (Swin shift pattern: 0, ws//2, 0, ws//2, ...)
         shift_none = (0,) * self.spatial_dims
         shift_half = tuple(w // 2 for w in self.window_size_per_axis)
-
         self.blocks = nn.ModuleList([
             WiDiTBlock(
                 dim=hidden_size,
@@ -100,8 +100,7 @@ class WiDiT(nn.Module):
             for i in range(depth)
         ])
 
-        # Final projection head
-        # (We currently enforce equal patch size along each axis when unpatchifying.)
+        # Final projection head (equal patch per axis enforced in unpatchify)
         patch_scalar = self.patch_size_per_axis[0]
         self.final = WiDiTFinalLayer(
             hidden_size=hidden_size,
@@ -121,100 +120,91 @@ class WiDiT(nn.Module):
 
         self.apply(_xavier_linear)
 
-        # Timestep MLP small init
         self.timestep_embedder.init_weights()
-
         self.input_patch_embed.init_weights()
-        self.conditioned_patch_embed.init_weights()
-        
+        if self.conditioned_patch_embed is not None:
+            self.conditioned_patch_embed.init_weights()
         for block in self.blocks:
             block.init_weights()
-        
         self.final.init_weights()
 
-
     def _unpatchify(self, token_tensor: torch.Tensor, spatial_sizes: tuple[int, ...]) -> torch.Tensor:
-        """
-        Args:
-          token_tensor:  (N, T, (p^k) * out_channels)
-          spatial_sizes: (S1, ..., Sk) original spatial sizes
-
-        Returns:
-          (N, out_channels, *spatial_sizes)
-        """
         batch_size, num_tokens, last_dim = token_tensor.shape
         patch_sizes = self.patch_size_per_axis
         out_channels = self.out_channels
         k = self.spatial_dims
 
-        # enforce equal patch along each axis for now
-        assert all(p == patch_sizes[0] for p in patch_sizes), \
-            "unpatchify assumes equal patch along each axis"
+        assert all(p == patch_sizes[0] for p in patch_sizes), "unpatchify assumes equal patch along each axis"
         patch_scalar = patch_sizes[0]
 
-        # token grid sizes along each axis
         token_grid_sizes = tuple(Si // patch_scalar for Si in spatial_sizes)
         assert _prod(token_grid_sizes) == num_tokens, \
             f"Token count mismatch in unpatchify: prod{token_grid_sizes} != {num_tokens}"
         assert last_dim == (patch_scalar ** k) * out_channels, \
             f"Last dim should be p^k * out_channels, got {last_dim} vs {(patch_scalar ** k) * out_channels}"
 
-        # (N, g1,...,gk, p,...,p, C_out)
         x = token_tensor.view(batch_size, *token_grid_sizes, *([patch_scalar] * k), out_channels)
-
-        # Permute to (N, C_out, g1, p, g2, p, ..., gk, p)
         perm = [0, 1 + 2 * k]  # N, C_out
         for i in range(k):
             perm.extend([1 + i, 1 + k + i])
         x = x.permute(*perm).contiguous()
 
-        # Merge (gi, p) -> Si
         output_shape = [batch_size, out_channels]
         for i in range(k):
             output_shape.append(token_grid_sizes[i] * patch_scalar)
         return x.view(*output_shape)
 
-    # ------------------- forward -------------------
-
     def forward(
         self,
         input_tensor: torch.Tensor,
-        conditioned_tensor: torch.Tensor,
         timestep: torch.Tensor | None = None,
+        *,
+        conditioned: torch.Tensor | None = None,
+        **_: dict,
     ) -> torch.Tensor:
         """
         Args:
-          input_tensor:       (N, C, *spatial)
-          conditioned_tensor: (N, C, *spatial), must match input_tensor shape
-          timestep:           (N,) or None — optional conditioning (e.g., diffusion timestep)
+          input_tensor: (N, C, *spatial)
+          timestep:     (N,) or None — optional diffusion timestep (or other scalar schedule)
+          conditioned:  optional (N, C, *spatial) — REQUIRED if `use_conditioning=True`,
+                        must be omitted if `use_conditioning=False`.
 
         Returns:
           (N, out_channels, *spatial)
         """
-        # Basic shape checks
         assert input_tensor.ndim == 2 + self.spatial_dims, \
             f"input_tensor has incorrect shape {tuple(input_tensor.shape)}"
-        assert conditioned_tensor.shape == input_tensor.shape, \
-            "`conditioned_tensor` must match `input_tensor` shape"
+
+        if self.use_conditioning:
+            assert conditioned is not None, \
+                "This model was constructed with use_conditioning=True, but `conditioned` was not provided."
+            assert conditioned.shape == input_tensor.shape, \
+                "`conditioned` must match `input_tensor` shape"
+        else:
+            assert conditioned is None, \
+                "This model was constructed with use_conditioning=False; do not pass `conditioned`."
 
         batch_size = input_tensor.shape[0]
         spatial_sizes = tuple(input_tensor.shape[2 + i] for i in range(self.spatial_dims))
 
-        # Patch-embed inputs and concatenate along token channel dim
-        tokens_input = self.input_patch_embed(input_tensor)              # (N, T, hidden/2)
-        tokens_conditioned = self.conditioned_patch_embed(conditioned_tensor)  # (N, T, hidden/2)
-        tokens = torch.cat([tokens_input, tokens_conditioned], dim=-1)  # (N, T, hidden)
+        # Patch-embed and (optionally) concatenate
+        tokens_input = self.input_patch_embed(input_tensor)  # (N, T, H or H/2)
+        if self.use_conditioning:
+            tokens_cond = self.conditioned_patch_embed(conditioned)        # (N, T, H/2)
+            tokens = torch.cat([tokens_input, tokens_cond], dim=-1)        # (N, T, H)
+        else:
+            tokens = tokens_input                                          # (N, T, H)
 
-        # Token grid sizes along each axis (in tokens, not pixels/voxels)
-        patch_scalar = self.patch_size_per_axis[0]  # equal p enforced by unpatchify
+        # Token grid (per axis, in tokens)
+        patch_scalar = self.patch_size_per_axis[0]
         token_grid_sizes = tuple(Si // patch_scalar for Si in spatial_sizes)
         assert _prod(token_grid_sizes) == tokens.shape[1], \
             f"Token count mismatch: prod{token_grid_sizes} vs {tokens.shape[1]}"
 
-        # Optional timestep conditioning → per-sample vector matching token dim
+        # Optional timestep conditioning
         timestep_embedding = None
         if timestep is not None:
-            timestep_embedding = self.timestep_embedder(timestep)  # (N, hidden)
+            timestep_embedding = self.timestep_embedder(timestep)          # (N, hidden)
             assert timestep_embedding.shape == (batch_size, tokens.shape[-1]), \
                 f"timestep embedding shape {tuple(timestep_embedding.shape)} must be (N, hidden={tokens.shape[-1]})"
 
@@ -222,8 +212,8 @@ class WiDiT(nn.Module):
         for block in self.blocks:
             tokens = block(tokens, timestep_embedding, *token_grid_sizes)
 
-        # Final projection and unpatchify
-        out_tokens = self.final(tokens, timestep_embedding)  # (N, T, p^k * out_channels)
+        # Head & unpatchify
+        out_tokens = self.final(tokens, timestep_embedding)                 # (N, T, p^k * out_channels)
         return self._unpatchify(out_tokens, spatial_sizes)
 
 

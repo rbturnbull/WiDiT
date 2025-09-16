@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "WiDiT"
 version = "0.1.0a1"
-description = "Windowed Diffusion Transformer (2D/3D)"
+description = "Windowed Diffusion Transformer in 2D and 3D"
 authors = ["Robert Turnbull <robert.turnbull@unimelb.edu.au>"]
 license = "Apache-2.0"
 readme = "README.rst"
