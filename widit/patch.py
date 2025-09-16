@@ -52,7 +52,7 @@ class PatchEmbed(nn.Module):
 
     # --- builders ---
 
-    def _build_2d_patch_embedding(self) -> PatchEmbed2D:
+    def _build_2d_patch_embedding(self, device=None, dtype=None) -> PatchEmbed2D:
         if self.patch_embedding_2d is None:
             patch_size_2d = _to_tuple(self.patch_size, 2)
             img_size = self.input_size if isinstance(self.input_size, (int, tuple, list)) else None
@@ -65,15 +65,20 @@ class PatchEmbed(nn.Module):
                 flatten=True,  # (N, T, embed_dim)
             )
             self.init_weights2d()
+            if device is not None or dtype is not None:
+                self.patch_embedding_2d = self.patch_embedding_2d.to(device=device, dtype=dtype)
+
         return self.patch_embedding_2d
 
-    def _build_3d_patch_embedding(self) -> None:
+    def _build_3d_patch_embedding(self, device=None, dtype=None) -> nn.Conv3d:
         if self.patch_embedding_3d is None:
             patch_size_3d = _to_tuple(self.patch_size, 3)
             self.patch_embedding_3d = nn.Conv3d(
                 self.in_chans, self.embed_dim, kernel_size=patch_size_3d, stride=patch_size_3d, bias=self.bias
             )
             self.init_weights3d()
+            if device is not None or dtype is not None:
+                self.patch_embedding_3d = self.patch_embedding_3d.to(device=device, dtype=dtype)
         return self.patch_embedding_3d
 
     def _forward_2d(self, x: torch.Tensor) -> torch.Tensor:
@@ -98,13 +103,13 @@ class PatchEmbed(nn.Module):
         if spatial_dims == 2:
             assert x.ndim == 4, f"Expected (N,C,H,W) for 2D, got shape {tuple(x.shape)}"
             if self.patch_embedding_2d is None:
-                self._build_2d_patch_embedding()
+                self._build_2d_patch_embedding(device=x.device, dtype=x.dtype)
             return self._forward_2d(x)
 
         # spatial_dims == 3
         assert x.ndim == 5, f"Expected (N,C,D,H,W) for 3D, got shape {tuple(x.shape)}"
         if self.patch_embedding_3d is None:
-            self._build_3d_patch_embedding()
+            self._build_3d_patch_embedding(device=x.device, dtype=x.dtype)
         return self._forward_3d(x)
 
     def init_weights2d(self) -> None:
