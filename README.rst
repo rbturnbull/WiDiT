@@ -5,7 +5,10 @@
 
 .. start-badges
 
-|testing badge| |coverage badge| |docs badge| |black badge|
+|pypi badge| |testing badge| |coverage badge| |docs badge| |black badge|
+
+.. |pypi badge| image:: https://img.shields.io/pypi/v/widit.svg?color=blue
+    :target: https://pypi.org/project/widit/
 
 .. |testing badge| image:: https://github.com/rbturnbull/widit/actions/workflows/testing.yml/badge.svg
     :target: https://github.com/rbturnbull/widit/actions
@@ -37,6 +40,12 @@ Installation
 ==================================
 
 Install using pip:
+
+.. code-block:: bash
+
+    pip install widit
+
+Or
 
 .. code-block:: bash
 
@@ -260,8 +269,7 @@ Credits
 
 .. start-credits
 
-Robert Turnbull
-For more information contact: <robert.turnbull@unimelb.edu.au>
+`Robert Turnbull <https://robturnbull.com>`_ - Melbourne Data Analytics Platform (MDAP), The University of Melbourne
 
 .. end-credits
 
