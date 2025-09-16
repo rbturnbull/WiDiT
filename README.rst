@@ -23,6 +23,10 @@ WiDiT
 
 .. start-quickstart
 
+.. image:: https://rbturnbull.github.io/WiDiT/_images/WiDiT-Banner.png
+   :alt: WiDiT banner
+   :align: center
+
 WiDiT: Windowed Diffusion Transformer (2D/3D)
 =============================================
 
