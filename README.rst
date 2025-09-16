@@ -83,10 +83,12 @@ Quick Start (2D)
        window_size=8,            # can be int or (wh, ww)
        mlp_ratio=4.0,
        learn_sigma=True,         # output channels = 2*C if True
+       use_conditioning=True,    # expect a conditioning image
    )
 
-   # Timestep is optional; pass None to disable conditioning
-   y = model(x, cond, t)         # (N, 2*C, H, W) if learn_sigma=True
+   # NEW CALL SIGNATURE:
+   # forward(input, timestep=None, *, conditioned=None)
+   y = model(x, t, conditioned=cond)     # (N, 2*C, H, W) if learn_sigma=True
 
 
 Quick Start (3D)
@@ -113,9 +115,38 @@ Quick Start (3D)
        window_size=(4, 4, 4),    # can be int or (wd, wh, ww)
        mlp_ratio=4.0,
        learn_sigma=False,        # output channels = C if False
+       use_conditioning=True,
    )
 
-   y = model(x, cond, timestep=None)  # (N, C, D, H, W)
+   y = model(x, timestep=None, conditioned=cond)  # (N, C, D, H, W)
+
+
+Unconditioned Image Path (no second image)
+------------------------------------------
+
+.. code-block:: python
+
+   import torch
+   from widit.models import WiDiT
+
+   N, C, H, W = 2, 3, 128, 96
+   x = torch.randn(N, C, H, W)
+   t = torch.randint(0, 1000, (N,))
+
+   model = WiDiT(
+       spatial_dim=2,
+       in_channels=C,
+       hidden_size=256,
+       depth=4,
+       num_heads=8,
+       patch_size=2,
+       window_size=8,
+       learn_sigma=True,
+       use_conditioning=False,       # <-- no conditioning image expected
+   )
+
+   # Do NOT pass `conditioned` when use_conditioning=False
+   y = model(x, t)  # (N, 2*C, H, W)
 
 
 Presets
@@ -127,6 +158,7 @@ using ``patch_size=2`` and Swin-style window attention:
 .. code-block:: python
 
    from widit.models import PRESETS
+   import torch
 
    # 2D: B, M, L, XL
    model_2d = PRESETS["WiDiT-L/2"](in_channels=3, learn_sigma=True)
@@ -134,9 +166,18 @@ using ``patch_size=2`` and Swin-style window attention:
    # 3D: B, M, L, XL
    model_3d = PRESETS["WiDiT3D-M/2"](in_channels=1, learn_sigma=False)
 
+   # Example inputs
+   x2d = torch.randn(1, 3, 64, 48)
+   c2d = torch.randn_like(x2d)
+   t2d = torch.randint(0, 1000, (1,))
+
+   x3d = torch.randn(1, 1, 32, 32, 24)
+   c3d = torch.randn_like(x3d)
+   t3d = torch.randint(0, 1000, (1,))
+
    # Run
-   y2d = model_2d(x2d, cond2d, timestep=None)
-   y3d = model_3d(x3d, cond3d, timestep=torch.randint(0, 1000, (x3d.shape[0],)))
+   y2d = model_2d(x2d, t2d, conditioned=c2d)
+   y3d = model_3d(x3d, timestep=None, conditioned=c3d)
 
 
 API Overview
@@ -156,12 +197,14 @@ API Overview
        window_size: int | Sequence[int] = 8,      # per-axis tuple allowed
        mlp_ratio: float = 4.0,
        learn_sigma: bool = True,
+       use_conditioning: bool = True,             # expect a second image unless set False
    )
 
    forward(
-       input_tensor:       torch.Tensor,          # (N, C, *spatial)
-       conditioned_tensor: torch.Tensor,          # (N, C, *spatial), same shape as input_tensor
-       timestep:           torch.Tensor | None = None,  # (N,) or None
+       input_tensor: torch.Tensor,                # (N, C, *spatial)
+       timestep: torch.Tensor | None = None,      # (N,) or None
+       *,                                          # keyword-only from here
+       conditioned: torch.Tensor | None = None,   # (N, C, *spatial) if use_conditioning=True
    ) -> torch.Tensor                              # (N, out_channels, *spatial)
 
 **Shapes & contracts**
@@ -170,13 +213,16 @@ API Overview
 - ``patch_size`` must evenly divide each spatial dimension.
 - ``window_size`` can be an int or a per-axis tuple; internal padding ensures
   full windows (removed before returning).
-- ``hidden_size`` must be **even** (split across the two patch embedders) and divisible by ``num_heads``.
+- ``hidden_size`` must be **even** (split across the two patch embedders when
+  ``use_conditioning=True``) and divisible by ``num_heads``.
 - If ``learn_sigma=True``, output channels = ``2 * in_channels`` (mean + sigma style).
+- If ``use_conditioning=True``, you **must** pass ``conditioned=...`` to ``forward``.
+  If ``use_conditioning=False``, passing ``conditioned`` will raise an assertion.
 
 **Conditioning**
 
 - ``timestep`` is **optional**. Pass ``None`` to disable AdaLN conditioning (the
-  block falls back to standard LN + residual).
+  blocks reduce to standard LN + residual).
 - If provided, the model uses ``widit.timesteps.TimestepEmbedder`` to produce
   a per-sample vector projected to the token dimension.
 
@@ -188,8 +234,8 @@ These are used internally, but you can also import them for custom stacks.
 
 - ``widit.blocks.WiDiTBlock`` – N-D windowed MSA + MLP with AdaLN-Zero
 - ``widit.blocks.WiDiTFinalLayer`` – final projection head with AdaLN-Zero
-- ``widit.patch.PatchEmbed`` – unified 2D/3D patch embedding
-- ``widit.timesteps.TimestepEmbedder`` – sinusoidal → MLP conditioning
+- ``widit.patch.PatchEmbed`` – unified 2D/3D patch embedding (with ``init_weights()``)
+- ``widit.timesteps.TimestepEmbedder`` – sinusoidal → MLP conditioning (with ``init_weights()``)
 
 All of the above expose ``init_weights()`` so the model can initialize components
 cleanly (adaLN-Zero policy for blocks & head; Xavier for projections; Normal for
@@ -216,6 +262,7 @@ Training Snippet
        patch_size=2,
        window_size=8,
        learn_sigma=True,
+       use_conditioning=True,
    ).to(device)
 
    opt = AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
@@ -225,7 +272,7 @@ Training Snippet
        cond = torch.randn_like(x)
        t    = torch.randint(0, 1000, (x.shape[0],), device=device)
 
-       y = model(x, cond, t)                      # (N, 6, H, W) here (mean+sigma for C=3)
+       y = model(x, t, conditioned=cond)          # (N, 6, H, W) here (mean+sigma for C=3)
        target = torch.randn_like(y)
 
        loss = torch.nn.functional.mse_loss(y, target)
@@ -245,7 +292,12 @@ Tips & Gotchas
   crop back, but patch embedding is stride-based.
 - **Timestep optional**: pass ``timestep=None`` to run the model without diffusion
   conditioning (AdaLN defaults reduce to a vanilla transformer residual path).
-- **Mixed precision**: standard AMP (``torch.cuda.amp``) works out-of-the-box.
+- **Conditioning toggle**: if you don’t have a conditioning image, set
+  ``use_conditioning=False`` and call ``model(x, timestep)``
+
+
+
+
 
 
 Reference Shapes
