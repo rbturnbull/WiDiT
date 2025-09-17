@@ -237,6 +237,10 @@ PRESETS = {
     "WiDiT-M/2":  WiDiT2D_M_2,
     "WiDiT-L/2":  WiDiT2D_L_2,
     "WiDiT-XL/2": WiDiT2D_XL_2,
+    "WiDiT2D-B/2":  WiDiT2D_B_2,
+    "WiDiT2D-M/2":  WiDiT2D_M_2,
+    "WiDiT2D-L/2":  WiDiT2D_L_2,
+    "WiDiT2D-XL/2": WiDiT2D_XL_2,
     # 3D
     "WiDiT3D-B/2":  WiDiT3D_B_2,
     "WiDiT3D-M/2":  WiDiT3D_M_2,
