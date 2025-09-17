@@ -28,7 +28,7 @@ class WiDiT(nn.Module):
         hidden_size: int = 768,
         depth: int = 12,
         num_heads: int = 12,
-        window_size: int | Sequence[int] = 8,
+        window_size: int | Sequence[int] = 4,
         mlp_ratio: float = 4.0,
         learn_sigma: bool = True,
         use_conditioning: bool = True,   # <— NEW
@@ -63,6 +63,7 @@ class WiDiT(nn.Module):
                 in_chans=in_channels,
                 embed_dim=half_hidden,
                 bias=True,
+                spatial_dim=self.spatial_dims,
             )
             self.conditioned_patch_embed = PatchEmbed(
                 input_size=input_size,
@@ -70,6 +71,7 @@ class WiDiT(nn.Module):
                 in_chans=in_channels,
                 embed_dim=half_hidden,
                 bias=True,
+                spatial_dim=self.spatial_dims,
             )
         else:
             # single stream uses full hidden_size
@@ -79,6 +81,7 @@ class WiDiT(nn.Module):
                 in_chans=in_channels,
                 embed_dim=hidden_size,
                 bias=True,
+                spatial_dim=self.spatial_dims,
             )
             self.conditioned_patch_embed = None  # explicitly absent
 

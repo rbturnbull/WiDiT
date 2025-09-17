@@ -38,6 +38,7 @@ class PatchEmbed(nn.Module):
         in_chans: int,
         embed_dim: int,
         bias: bool = True,
+        spatial_dim: int | None = None,
     ):
         super().__init__()
         self.input_size = input_size
@@ -50,7 +51,10 @@ class PatchEmbed(nn.Module):
         self.patch_embedding_2d: PatchEmbed2D | None = None
         self.patch_embedding_3d: nn.Conv3d | None = None
 
-    # --- builders ---
+        if spatial_dim == 2:
+            self._build_2d_patch_embedding()
+        elif spatial_dim == 3:
+            self._build_3d_patch_embedding()
 
     def _build_2d_patch_embedding(self, device=None, dtype=None) -> PatchEmbed2D:
         if self.patch_embedding_2d is None:

@@ -238,7 +238,7 @@ class WiDiTFinalLayer(nn.Module):
             batch_size, _, channels = tokens.shape
             device, dtype = tokens.device, tokens.dtype
             shift = torch.zeros(batch_size, channels, device=device, dtype=dtype)
-            scale = torch.zeros(batch_size, channels, device=device, dtype=dtype)
+            scale = torch.ones(batch_size, channels, device=device, dtype=dtype)
         else:
             shift, scale = self.adaln(timestep_embedding).chunk(2, dim=1)
         return self.linear(modulate(self.norm(tokens), shift, scale))
