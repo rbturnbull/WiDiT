@@ -1,4 +1,5 @@
 from typing import Sequence
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -31,9 +32,25 @@ class WiDiT(nn.Module):
         window_size: int | Sequence[int] = 4,
         mlp_ratio: float = 4.0,
         learn_sigma: bool = True,
-        use_conditioning: bool = True,   # <— NEW
+        use_conditioning: bool = True,
     ):
         super().__init__()
+
+        # Store config to be able to recreate model later
+        self.config = dict(
+            spatial_dim=spatial_dim,
+            input_size=input_size,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            hidden_size=hidden_size,
+            depth=depth,
+            num_heads=num_heads,
+            window_size=window_size,
+            mlp_ratio=mlp_ratio,
+            learn_sigma=learn_sigma,
+            use_conditioning=use_conditioning,
+        )
+
         assert spatial_dim in (2, 3), f"spatial_dim must be 2 or 3, got {spatial_dim}"
 
         # Core hyperparameters
@@ -218,6 +235,25 @@ class WiDiT(nn.Module):
         # Head & unpatchify
         out_tokens = self.final(tokens, timestep_embedding)                 # (N, T, p^k * out_channels)
         return self._unpatchify(out_tokens, spatial_sizes)
+
+    def save(self, path: str|Path):
+        """Save model weights and configuration to a single file."""
+        obj = {
+            "model_state": self.state_dict(),
+            "config": self.config,
+        }
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(obj, path)
+
+    @classmethod
+    def load(cls, path: str, map_location="cpu"):
+        """Load WiDiT model and weights from file."""
+        checkpoint = torch.load(path, map_location=map_location)
+        config = checkpoint["config"]
+        model = cls(**config)
+        model.load_state_dict(checkpoint["model_state"])
+        return model
 
 
 # ---- WiDiT presets ----

@@ -190,6 +190,40 @@ def test_widit_mismatched_conditioned_shape_raises():
         _ = model(x, t, conditioned=cond)  # NEW ORDER
 
 
+# -------------------- Persistence --------------------
+
+def test_widit_save_and_load_roundtrip(tmp_path):
+    torch.manual_seed(123)
+    model = WiDiT(
+        spatial_dim=2,
+        input_size=(8, 8),
+        patch_size=2,
+        in_channels=1,
+        hidden_size=32,
+        depth=2,
+        num_heads=4,
+        window_size=4,
+        mlp_ratio=3.0,
+        learn_sigma=False,
+        use_conditioning=False,
+    )
+    for param in model.parameters():
+        param.data.copy_(torch.randn_like(param))  # give the weights non-trivial values
+
+    save_path = tmp_path / "checkpoints" / "widit.pt"
+    model.save(save_path)
+
+    assert save_path.exists()
+    loaded = WiDiT.load(save_path, map_location="cpu")
+
+    assert loaded.config == model.config
+    original_state = model.state_dict()
+    loaded_state = loaded.state_dict()
+    for key in original_state:
+        torch.testing.assert_close(loaded_state[key], original_state[key])
+    assert all(not p.is_cuda for p in loaded.parameters())
+
+
 # -------------------- PRESETS --------------------
 
 def _small_input_for_preset(name: str):
