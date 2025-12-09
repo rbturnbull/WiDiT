@@ -4,6 +4,7 @@ from typing import Iterable, Sequence
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 def _to_sizes(ws: int | Sequence[int], spatial_dim: int) -> tuple[int, ...]:
@@ -133,12 +134,14 @@ class WindowAttention(nn.Module):
         num_heads: int,
         spatial_dim: int,
         qkv_bias: bool = True,
+        use_flash_attention: bool = False,
     ):
         super().__init__()
         self.dim = dim
         self.spatial_dim = spatial_dim
         self.ws: tuple[int, ...] = _to_sizes(window_size, spatial_dim)
         self.num_heads = num_heads
+        self.use_flash_attention = use_flash_attention
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.proj = nn.Linear(dim, dim)
@@ -155,6 +158,17 @@ class WindowAttention(nn.Module):
     def tokens_per_window(self) -> int:
         return _prod(self.ws)
 
+    def _relative_position_bias(self, T: int, device, dtype) -> torch.Tensor:
+        idx_flat = self.rel_pos_index.view(-1).to(self.rel_pos_bias.device)
+        bias = (
+            self.rel_pos_bias[idx_flat]
+            .view(T, T, self.num_heads)
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .to(device=device, dtype=dtype)
+        )
+        return bias
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         x: (B_, T, C) where T == prod(ws)
@@ -168,19 +182,24 @@ class WindowAttention(nn.Module):
         k = qkv[:, :, 1].transpose(1, 2)
         v = qkv[:, :, 2].transpose(1, 2)
 
-        q = q * self.scale
-        attn = q @ k.transpose(-2, -1)  # (B_, H, T, T)
+        bias = self._relative_position_bias(T, device=x.device, dtype=q.dtype)
 
-        # ensure index lives on the same device as the bias before advanced indexing
-        idx_flat = self.rel_pos_index.view(-1).to(self.rel_pos_bias.device)
-        bias = (
-            self.rel_pos_bias[idx_flat]
-            .view(T, T, self.num_heads)
-            .permute(2, 0, 1)
-            .unsqueeze(0)
-            .to(attn.dtype)
-        )
-        attn = (attn + bias).softmax(dim=-1)
-        out = attn @ v
+        if self.use_flash_attention and hasattr(F, "scaled_dot_product_attention"):
+            # Flash attention path (PyTorch SDPA picks flash kernel when available)
+            attn_mask = bias.expand(B_, -1, -1, -1)
+            out = F.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=attn_mask,
+                dropout_p=0.0,
+                is_causal=False,
+            )
+        else:
+            q = q * self.scale
+            attn = q @ k.transpose(-2, -1)  # (B_, H, T, T)
+            attn = (attn + bias).softmax(dim=-1)
+            out = attn @ v
+
         out = out.transpose(1, 2).reshape(B_, T, C)
         return self.proj(out)

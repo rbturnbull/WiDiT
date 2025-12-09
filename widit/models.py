@@ -33,6 +33,7 @@ class WiDiT(nn.Module):
         mlp_ratio: float = 4.0,
         learn_sigma: bool = True,
         use_conditioning: bool = True,
+        use_flash_attention: bool = False,
     ):
         super().__init__()
 
@@ -49,6 +50,7 @@ class WiDiT(nn.Module):
             mlp_ratio=mlp_ratio,
             learn_sigma=learn_sigma,
             use_conditioning=use_conditioning,
+            use_flash_attention=use_flash_attention,
         )
 
         assert spatial_dim in (2, 3), f"spatial_dim must be 2 or 3, got {spatial_dim}"
@@ -59,6 +61,7 @@ class WiDiT(nn.Module):
         self.learn_sigma = learn_sigma
         self.out_channels = in_channels * 2 if learn_sigma else in_channels
         self.use_conditioning = use_conditioning
+        self.use_flash_attention = use_flash_attention
 
         # Normalize per-axis hyperparameters
         self.patch_size_per_axis = _to_sizes(patch_size, self.spatial_dims)
@@ -116,6 +119,7 @@ class WiDiT(nn.Module):
                 shift_size=(shift_none if (i % 2 == 0) else shift_half),
                 mlp_ratio=mlp_ratio,
                 spatial_dim=self.spatial_dims,
+                use_flash_attention=self.use_flash_attention,
             )
             for i in range(depth)
         ])

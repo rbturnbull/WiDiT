@@ -86,6 +86,7 @@ class WiDiTBlock(nn.Module):
         shift_size: int | Sequence[int] = 0,
         mlp_ratio: float = 4.0,
         spatial_dim: int = 2,
+        use_flash_attention: bool = False,
     ):
         super().__init__()
         self.channels = dim
@@ -94,7 +95,14 @@ class WiDiTBlock(nn.Module):
         self.shift_sizes: tuple[int, ...] = _to_sizes(shift_size, self.spatial_dims)
 
         self.pre_attn_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
-        self.attn = WindowAttention(dim, self.window_sizes, num_heads, spatial_dim=self.spatial_dims, qkv_bias=True)
+        self.attn = WindowAttention(
+            dim,
+            self.window_sizes,
+            num_heads,
+            spatial_dim=self.spatial_dims,
+            qkv_bias=True,
+            use_flash_attention=use_flash_attention,
+        )
         self.pre_mlp_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
 
         self.mlp = Mlp(
