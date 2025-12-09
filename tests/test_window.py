@@ -119,6 +119,41 @@ def test_attention_bias_index_consistency_small_2d():
     # different offsets should map to (usually) different indices
     assert (idx[0, 1] != idx[0, 0]).item()
 
+def test_window_attention_flash_path_uses_sdpa(monkeypatch):
+    dim = 16
+    heads = 4
+    ws = (2, 2)
+    T = _prod(ws)
+    B_ = 3
+    x = torch.randn(B_, T, dim)
+
+    sdpa_calls = {}
+
+    def fake_sdpa(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False):
+        sdpa_calls["q"] = q
+        sdpa_calls["k"] = k
+        sdpa_calls["v"] = v
+        sdpa_calls["mask"] = attn_mask
+        sdpa_calls["dropout_p"] = dropout_p
+        sdpa_calls["is_causal"] = is_causal
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", fake_sdpa, raising=False)
+
+    attn = WindowAttention(
+        dim=dim,
+        window_size=ws,
+        num_heads=heads,
+        spatial_dim=2,
+        use_flash_attention=True,
+    )
+    out = attn(x)
+
+    assert out.shape == (B_, T, dim)
+    assert sdpa_calls["mask"].shape == (B_, heads, T, T)
+    assert sdpa_calls["dropout_p"] == 0.0
+    assert sdpa_calls["is_causal"] is False
+
 # ---------- non-uniform windows & non-contiguous inputs ----------
 
 def test_nonuniform_windows_2d():
