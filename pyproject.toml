@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "WiDiT"
-version = "0.1.1a1"
+version = "0.1.1a2"
 description = "Windowed Diffusion Transformer in 2D and 3D"
 authors = ["Robert Turnbull <robert.turnbull@unimelb.edu.au>"]
 license = "Apache-2.0"
