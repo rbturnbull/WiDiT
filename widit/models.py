@@ -26,14 +26,15 @@ class WiDiT(nn.Module):
         input_size: int | Sequence[int] | None = None,
         patch_size: int | Sequence[int] = 2,
         in_channels: int = 1,
+        out_channels: int|None = None,
         hidden_size: int = 768,
         depth: int = 12,
         num_heads: int = 12,
         window_size: int | Sequence[int] = 4,
         mlp_ratio: float = 4.0,
-        learn_sigma: bool = True,
         use_conditioning: bool = True,
         use_flash_attention: bool = False,
+        **kwargs,
     ):
         super().__init__()
 
@@ -48,7 +49,7 @@ class WiDiT(nn.Module):
             num_heads=num_heads,
             window_size=window_size,
             mlp_ratio=mlp_ratio,
-            learn_sigma=learn_sigma,
+            out_channels=out_channels,
             use_conditioning=use_conditioning,
             use_flash_attention=use_flash_attention,
         )
@@ -58,8 +59,7 @@ class WiDiT(nn.Module):
         # Core hyperparameters
         self.spatial_dims = spatial_dim
         self.in_channels = in_channels
-        self.learn_sigma = learn_sigma
-        self.out_channels = in_channels * 2 if learn_sigma else in_channels
+        self.out_channels = out_channels or in_channels
         self.use_conditioning = use_conditioning
         self.use_flash_attention = use_flash_attention
 

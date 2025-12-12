@@ -23,8 +23,8 @@ def _rand_3d(n=2, c=1, d=8, h=8, w=6):
 
 # -------------------- Core WiDiT (2D) --------------------
 
-@pytest.mark.parametrize("learn_sigma", [True, False])
-def test_widit_2d_forward_shapes_and_grad(learn_sigma):
+@pytest.mark.parametrize("out_channels", [1, 2])
+def test_widit_2d_forward_shapes_and_grad(out_channels):
     torch.manual_seed(0)
     x, t, cond = _rand_2d(n=2, c=3, h=16, w=12)  # grid = (8,6)
 
@@ -38,13 +38,12 @@ def test_widit_2d_forward_shapes_and_grad(learn_sigma):
         num_heads=4,
         window_size=8,     # grid 8x6 gets padded along width inside the block(s)
         mlp_ratio=2.0,
-        learn_sigma=learn_sigma,
+        out_channels=out_channels,
     )
     # NEW ORDER: (x, timestep, *, conditioned=...)
     y = model(x, t, conditioned=cond)
 
-    outc = 3 * (2 if learn_sigma else 1)
-    assert y.shape == (2, outc, 16, 12)
+    assert y.shape == (2, out_channels, 16, 12)
 
     target = torch.randn_like(y)
     loss = torch.nn.functional.mse_loss(y, target)
@@ -68,10 +67,10 @@ def test_widit_2d_tuple_window_and_padding():
         num_heads=3,
         window_size=(7, 4),  # non-uniform ws; grid 9x7 pads to 14x8 internally
         mlp_ratio=2.0,
-        learn_sigma=True,
+        out_channels=4,
     )
     y = model(x, t, conditioned=cond)
-    assert y.shape == (1, 4, 18, 14)  # 2*in_channels with learn_sigma=True
+    assert y.shape == (1, 4, 18, 14)  # out_channels = 4
 
 
 def test_widit_2d_timestep_none():
@@ -87,7 +86,6 @@ def test_widit_2d_timestep_none():
         num_heads=4,
         window_size=8,
         mlp_ratio=2.0,
-        learn_sigma=False,
     )
     y = model(x, timestep=None, conditioned=cond)
     assert y.shape == (1, 2, 16, 12)
@@ -96,8 +94,8 @@ def test_widit_2d_timestep_none():
 
 # -------------------- Core WiDiT (3D) --------------------
 
-@pytest.mark.parametrize("learn_sigma", [True, False])
-def test_widit_3d_forward_shapes_and_grad(learn_sigma):
+@pytest.mark.parametrize("out_channels", [1, 2])
+def test_widit_3d_forward_shapes_and_grad(out_channels):
     torch.manual_seed(0)
     x, t, cond = _rand_3d(n=2, c=1, d=8, h=8, w=6)  # p=2 -> grid 4x4x3
 
@@ -111,11 +109,10 @@ def test_widit_3d_forward_shapes_and_grad(learn_sigma):
         num_heads=6,
         window_size=(4, 4, 4),  # pads W-grid 3 -> 4 internally
         mlp_ratio=2.0,
-        learn_sigma=learn_sigma,
+        out_channels=out_channels,
     )
     y = model(x, t, conditioned=cond)
-    outc = 1 * (2 if learn_sigma else 1)
-    assert y.shape == (2, outc, 8, 8, 6)
+    assert y.shape == (2, out_channels, 8, 8, 6)
 
     target = torch.randn_like(y)
     loss = torch.nn.functional.mse_loss(y, target)
@@ -138,7 +135,7 @@ def test_widit_3d_nonuniform_window_padding():
         num_heads=5,
         window_size=(5, 3, 4),  # will pad each token-grid axis appropriately
         mlp_ratio=2.0,
-        learn_sigma=True,
+        out_channels=4,
     )
     y = model(x, t, conditioned=cond)
     assert y.shape == (1, 4, 10, 10, 8)  # 2*in_channels, original spatial sizes
@@ -249,17 +246,17 @@ def test_presets_dict_has_expected_entries():
 def test_every_preset_builds_and_runs(name):
     torch.manual_seed(0)
     ctor = PRESETS[name]
-    model = ctor(in_channels=1, learn_sigma=True)  # keep defaults for each preset
+    model = ctor(in_channels=1, out_channels=1)  # keep defaults for each preset
     x, t, cond = _small_input_for_preset(name)
     y = model(x, t, conditioned=cond)  # NEW ORDER
 
     # Validate output shape
     if "3D" in name:
         n, c, d, h, w = x.shape
-        assert y.shape == (n, 2 * c, d, h, w)
+        assert y.shape == (n, c, d, h, w)
     else:
         n, c, h, w = x.shape
-        assert y.shape == (n, 2 * c, h, w)
+        assert y.shape == (n, c, h, w)
 
     target = torch.randn_like(y)
     loss = torch.nn.functional.mse_loss(y, target)
@@ -275,7 +272,7 @@ def test_widit_unconditioned_path_runs_and_shapes():
     model = WiDiT(spatial_dim=2, in_channels=3, hidden_size=128, depth=2,
                   num_heads=4, patch_size=2, window_size=8, use_conditioning=False, learn_sigma=True)
     y = model(x, timestep=torch.randint(0, 1000, (2,)))
-    assert y.shape == (2, 6, 16, 12)  # 2 * in_channels
+    assert y.shape == (2, 3, 16, 12)  # 2 * in_channels
 
 
 def test_widit_unconditioned_rejects_conditioned_arg():
