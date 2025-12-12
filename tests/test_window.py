@@ -154,6 +154,57 @@ def test_window_attention_flash_path_uses_sdpa(monkeypatch):
     assert sdpa_calls["dropout_p"] == 0.0
     assert sdpa_calls["is_causal"] is False
 
+def test_window_attention_flash_auto_uses_sdpa(monkeypatch):
+    dim = 16
+    heads = 4
+    ws = (2, 2)
+    T = _prod(ws)
+    B_ = 2
+    x = torch.randn(B_, T, dim)
+
+    sdpa_calls = {}
+
+    def fake_sdpa(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False):
+        sdpa_calls["called"] = True
+        return torch.zeros_like(q)
+
+    monkeypatch.setattr(torch.nn.functional, "scaled_dot_product_attention", fake_sdpa, raising=False)
+
+    attn = WindowAttention(
+        dim=dim,
+        window_size=ws,
+        num_heads=heads,
+        spatial_dim=2,
+        use_flash_attention="auto",
+    )
+    out = attn(x)
+    assert out.shape == (B_, T, dim)
+    assert sdpa_calls.get("called") is True
+
+def test_window_attention_flash_auto_falls_back_without_sdpa(monkeypatch):
+    # Remove sdpa if present to force legacy path
+    if hasattr(torch.nn.functional, "scaled_dot_product_attention"):
+        monkeypatch.delattr(torch.nn.functional, "scaled_dot_product_attention", raising=False)
+
+    dim = 12
+    heads = 3
+    ws = (2, 2)
+    T = _prod(ws)
+    B_ = 2
+    x = torch.randn(B_, T, dim)
+
+    attn = WindowAttention(
+        dim=dim,
+        window_size=ws,
+        num_heads=heads,
+        spatial_dim=2,
+        use_flash_attention="auto",
+    )
+    out = attn(x)
+    assert out.shape == (B_, T, dim)
+    # Should still be backward-able on fallback path
+    out.sum().backward()
+
 # ---------- non-uniform windows & non-contiguous inputs ----------
 
 def test_nonuniform_windows_2d():

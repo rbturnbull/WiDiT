@@ -33,7 +33,7 @@ class WiDiT(nn.Module):
         window_size: int | Sequence[int] = 4,
         mlp_ratio: float = 4.0,
         use_conditioning: bool = True,
-        use_flash_attention: bool = False,
+        use_flash_attention: bool | str = "auto",
         **kwargs,
     ):
         super().__init__()
@@ -62,6 +62,8 @@ class WiDiT(nn.Module):
         self.out_channels = out_channels or in_channels
         self.use_conditioning = use_conditioning
         self.use_flash_attention = use_flash_attention
+
+        assert use_flash_attention in (True, False, "auto"), "use_flash_attention must be True, False, or 'auto'"
 
         # Normalize per-axis hyperparameters
         self.patch_size_per_axis = _to_sizes(patch_size, self.spatial_dims)

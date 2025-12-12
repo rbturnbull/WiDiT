@@ -134,13 +134,14 @@ class WindowAttention(nn.Module):
         num_heads: int,
         spatial_dim: int,
         qkv_bias: bool = True,
-        use_flash_attention: bool = False,
+        use_flash_attention: bool | str = "auto",
     ):
         super().__init__()
         self.dim = dim
         self.spatial_dim = spatial_dim
         self.ws: tuple[int, ...] = _to_sizes(window_size, spatial_dim)
         self.num_heads = num_heads
+        assert use_flash_attention in (True, False, "auto"), "use_flash_attention must be True, False, or 'auto'"
         self.use_flash_attention = use_flash_attention
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
@@ -157,6 +158,9 @@ class WindowAttention(nn.Module):
 
     def tokens_per_window(self) -> int:
         return _prod(self.ws)
+
+    def _wants_flash(self) -> bool:
+        return bool(self.use_flash_attention)
 
     def _relative_position_bias(self, T: int, device, dtype) -> torch.Tensor:
         idx_flat = self.rel_pos_index.view(-1).to(self.rel_pos_bias.device)
@@ -184,7 +188,8 @@ class WindowAttention(nn.Module):
 
         bias = self._relative_position_bias(T, device=x.device, dtype=q.dtype)
 
-        if self.use_flash_attention and hasattr(F, "scaled_dot_product_attention"):
+        flash_ok = self._wants_flash() and hasattr(F, "scaled_dot_product_attention")
+        if flash_ok:
             # Flash attention path (PyTorch SDPA picks flash kernel when available)
             attn_mask = bias.expand(B_, -1, -1, -1)
             out = F.scaled_dot_product_attention(
