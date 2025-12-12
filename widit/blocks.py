@@ -86,7 +86,7 @@ class WiDiTBlock(nn.Module):
         shift_size: int | Sequence[int] = 0,
         mlp_ratio: float = 4.0,
         spatial_dim: int = 2,
-        use_flash_attention: bool | str = "auto",
+        use_flash_attention: bool = True,
     ):
         super().__init__()
         self.channels = dim

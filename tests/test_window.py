@@ -175,7 +175,7 @@ def test_window_attention_flash_auto_uses_sdpa(monkeypatch):
         window_size=ws,
         num_heads=heads,
         spatial_dim=2,
-        use_flash_attention="auto",
+        use_flash_attention=True,
     )
     out = attn(x)
     assert out.shape == (B_, T, dim)
@@ -198,7 +198,7 @@ def test_window_attention_flash_auto_falls_back_without_sdpa(monkeypatch):
         window_size=ws,
         num_heads=heads,
         spatial_dim=2,
-        use_flash_attention="auto",
+        use_flash_attention=True,
     )
     out = attn(x)
     assert out.shape == (B_, T, dim)

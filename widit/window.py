@@ -134,14 +134,14 @@ class WindowAttention(nn.Module):
         num_heads: int,
         spatial_dim: int,
         qkv_bias: bool = True,
-        use_flash_attention: bool | str = "auto",
+        use_flash_attention: bool = True,
     ):
         super().__init__()
         self.dim = dim
         self.spatial_dim = spatial_dim
         self.ws: tuple[int, ...] = _to_sizes(window_size, spatial_dim)
         self.num_heads = num_heads
-        assert use_flash_attention in (True, False, "auto"), "use_flash_attention must be True, False, or 'auto'"
+
         self.use_flash_attention = use_flash_attention
 
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
