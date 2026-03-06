@@ -18,6 +18,8 @@ WiDiT: Windowed Diffusion Transformer (2D/3D)
    :caption: Contents:
 
    quickstart
+   training
+   api
    credits
 
 Indices and tables
