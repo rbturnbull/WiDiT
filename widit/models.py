@@ -1,4 +1,5 @@
 from typing import Sequence
+from abc import ABC
 from pathlib import Path
 
 import torch
@@ -11,7 +12,28 @@ from .timesteps import TimestepEmbedder
 from .window import _to_sizes, _prod
 
 
-class WiDiT(nn.Module):
+class ModelBase(nn.Module, ABC):
+    def save(self, path: str | Path) -> None:
+        """Save model weights and configuration to a single file."""
+        obj = {
+            "model_state": self.state_dict(),
+            "config": self.config,
+        }
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(obj, path)
+
+    @classmethod
+    def load(cls, path: str, map_location="cpu"):
+        """Load model and weights from file."""
+        checkpoint = torch.load(path, map_location=map_location)
+        config = checkpoint["config"]
+        model = cls(**config)
+        model.load_state_dict(checkpoint["model_state"])
+        return model
+
+
+class WiDiT(ModelBase):
     """
     SwinIR-style DiT with N-D windowed attention (2D or 3D), no downsampling.
 
@@ -251,24 +273,7 @@ class WiDiT(nn.Module):
         out_tokens = self.final(tokens, timestep_embedding)                 # (N, T, p^k * out_channels)
         return self._unpatchify(out_tokens, spatial_sizes)
 
-    def save(self, path: str|Path):
-        """Save model weights and configuration to a single file."""
-        obj = {
-            "model_state": self.state_dict(),
-            "config": self.config,
-        }
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(obj, path)
-
-    @classmethod
-    def load(cls, path: str, map_location="cpu"):
-        """Load WiDiT model and weights from file."""
-        checkpoint = torch.load(path, map_location=map_location)
-        config = checkpoint["config"]
-        model = cls(**config)
-        model.load_state_dict(checkpoint["model_state"])
-        return model
+    pass
 
 
 def get_conv(spatial_dim: int):
@@ -355,7 +360,7 @@ def up_block(
     )
 
 
-class Unet(nn.Module):
+class Unet(ModelBase):
     def __init__(
         self,
         *,
@@ -591,24 +596,7 @@ class Unet(nn.Module):
 
         return x
 
-    def save(self, path: str|Path):
-        """Save model weights and configuration to a single file."""
-        obj = {
-            "model_state": self.state_dict(),
-            "config": self.config,
-        }
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(obj, path)
-
-    @classmethod
-    def load(cls, path: str, map_location="cpu"):
-        """Load WiDiT model and weights from file."""
-        checkpoint = torch.load(path, map_location=map_location)
-        config = checkpoint["config"]
-        model = cls(**config)
-        model.load_state_dict(checkpoint["model_state"])
-        return model
+    pass
 
 
 # ---- WiDiT presets ----

@@ -2,7 +2,7 @@
 import pytest
 import torch
 
-from widit import WiDiT, PRESETS
+from widit import WiDiT, Unet, PRESETS
 
 
 def _rand_2d(n=2, c=1, h=16, w=12):
@@ -291,6 +291,50 @@ def test_every_preset_builds_and_runs(name):
     loss.backward()
     grads = [p.grad for p in model.parameters() if p.requires_grad]
     assert any(g is not None and torch.isfinite(g).all() and g.abs().sum() > 0 for g in grads)
+
+
+# -------------------- Unet interpolation path --------------------
+
+def test_unet_2d_interpolates_for_odd_sizes(monkeypatch):
+    import widit.models as models
+
+    calls = []
+    orig = models.F.interpolate
+
+    def _wrapped(*args, **kwargs):
+        calls.append((args, kwargs))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(models.F, "interpolate", _wrapped)
+
+    model = Unet(spatial_dim=2, in_channels=1, filters=8, kernel_size=3, layers=2, use_conditioning=False)
+    x = torch.randn(1, 1, 9, 11)
+    t = torch.randint(0, 1000, (1,), dtype=torch.long)
+
+    y = model(x, t)
+    assert y.shape == (1, 1, 9, 11)
+    assert len(calls) == 2
+
+
+def test_unet_3d_interpolates_for_odd_sizes(monkeypatch):
+    import widit.models as models
+
+    calls = []
+    orig = models.F.interpolate
+
+    def _wrapped(*args, **kwargs):
+        calls.append((args, kwargs))
+        return orig(*args, **kwargs)
+
+    monkeypatch.setattr(models.F, "interpolate", _wrapped)
+
+    model = Unet(spatial_dim=3, in_channels=1, filters=4, kernel_size=3, layers=2, use_conditioning=False)
+    x = torch.randn(1, 1, 9, 9, 11)
+    t = torch.randint(0, 1000, (1,), dtype=torch.long)
+
+    y = model(x, t)
+    assert y.shape == (1, 1, 9, 9, 11)
+    assert len(calls) == 2
 
 
 # -------- Optional conditioning OFF path --------
