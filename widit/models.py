@@ -35,11 +35,19 @@ class WiDiT(nn.Module):
         mlp_ratio: float = 4.0,
         use_conditioning: bool = True,
         use_flash_attention: bool = True,
+        timestep_embed_dim: int | None = None,
         **kwargs,
     ):
         super().__init__()
 
         # Store config to be able to recreate model later
+        resolved_timestep_embed_dim = timestep_embed_dim or hidden_size
+        if resolved_timestep_embed_dim != hidden_size:
+            raise ValueError(
+                "WiDiT currently requires timestep_embed_dim == hidden_size "
+                f"(got {resolved_timestep_embed_dim} vs {hidden_size})"
+            )
+
         self.config = dict(
             spatial_dim=spatial_dim,
             input_size=input_size,
@@ -53,6 +61,7 @@ class WiDiT(nn.Module):
             out_channels=out_channels,
             use_conditioning=use_conditioning,
             use_flash_attention=use_flash_attention,
+            timestep_embed_dim=resolved_timestep_embed_dim,
         )
 
         assert spatial_dim in (2, 3), f"spatial_dim must be 2 or 3, got {spatial_dim}"
@@ -107,7 +116,8 @@ class WiDiT(nn.Module):
             self.conditioned_patch_embed = None  # explicitly absent
 
         # Optional conditioning via timestep embedding → match token dim (hidden_size)
-        self.timestep_embedder = TimestepEmbedder(hidden_size)
+        self.timestep_embed_dim = resolved_timestep_embed_dim
+        self.timestep_embedder = TimestepEmbedder(self.timestep_embed_dim)
 
         # Transformer blocks (Swin shift pattern: 0, ws//2, 0, ws//2, ...)
         shift_none = (0,) * self.spatial_dims
@@ -351,12 +361,12 @@ class Unet(nn.Module):
         *,
         in_channels: int,
         filters: int,
-        kernel_size: int,
+        kernel_size: int | Sequence[int],
         layers: int,
         spatial_dim: int = 3,
         out_channels: int|None = None,
         use_conditioning: bool = True,
-        timestep_embed_dim: int = 128,
+        timestep_embed_dim: int | None = None,
     ):
         super().__init__()
 
@@ -369,7 +379,6 @@ class Unet(nn.Module):
             spatial_dim=spatial_dim,
             out_channels=out_channels,
             use_conditioning=use_conditioning,
-            timestep_embed_dim=timestep_embed_dim,
         )
 
         assert spatial_dim in (2, 3), "spatial_dim must be 2 or 3"
@@ -384,7 +393,8 @@ class Unet(nn.Module):
 
         self.layers = layers
         self.spatial_dims = spatial_dim
-        padding = kernel_size // 2
+        self.kernel_size_per_axis = _to_sizes(kernel_size, self.spatial_dims)
+        padding = tuple(k // 2 for k in self.kernel_size_per_axis)
         act = nn.ReLU()
 
         # Initial conv
@@ -392,13 +402,14 @@ class Unet(nn.Module):
             spatial_dims,
             in_channels,
             filters,
-            kernel_size,
+            self.kernel_size_per_axis,
             padding,
             act,
         )
 
         # Timestep embedding (shared size projected per block)
         self.timestep_embed_dim = timestep_embed_dim or (filters * 4)
+        self.config["timestep_embed_dim"] = self.timestep_embed_dim
         self.timestep_embedder = TimestepEmbedder(self.timestep_embed_dim)
 
         self.in_time_proj = nn.Linear(self.timestep_embed_dim, filters)
@@ -414,7 +425,7 @@ class Unet(nn.Module):
                     spatial_dims,
                     in_f,
                     out_f,
-                    kernel_size,
+                    self.kernel_size_per_axis,
                     padding,
                     act,
                 )
@@ -442,7 +453,7 @@ class Unet(nn.Module):
                     spatial_dims,
                     in_f,
                     out_f,
-                    kernel_size,
+                    self.kernel_size_per_axis,
                     padding,
                     act,
                 )
@@ -455,7 +466,7 @@ class Unet(nn.Module):
                 spatial_dims,
                 filters * 3,
                 filters,
-                kernel_size,
+                self.kernel_size_per_axis,
                 padding,
                 act,
             ),
@@ -484,22 +495,42 @@ class Unet(nn.Module):
         return x + temb
 
     def forward(
-        self, 
-        x, 
+        self,
+        input_tensor: torch.Tensor,
         timestep: torch.Tensor | None = None,
         *,
         conditioned: torch.Tensor | None = None,
+        **_: dict,
     ) -> torch.Tensor:
+        """
+        Args:
+          input_tensor: (N, C, *spatial)
+          timestep:     (N,) or None — optional diffusion timestep (or other scalar schedule)
+          conditioned:  optional (N, C, *spatial) — REQUIRED if `use_conditioning=True`,
+                        must be omitted if `use_conditioning=False`.
+
+        Returns:
+          (N, out_channels, *spatial)
+        """
+        assert input_tensor.ndim == 2 + self.spatial_dims, \
+            f"input_tensor has incorrect shape {tuple(input_tensor.shape)}"
+
+        if self.use_conditioning:
+            assert conditioned is not None, \
+                "This model was constructed with use_conditioning=True, but `conditioned` was not provided."
+            assert conditioned.shape == input_tensor.shape, \
+                "`conditioned` must match `input_tensor` shape"
+        else:
+            assert conditioned is None, \
+                "This model was constructed with use_conditioning=False; do not pass `conditioned`."
+
         skip_conn = []
         timestep_embedding = (
             self.timestep_embedder(timestep) if timestep is not None else None
         )
 
         # Concatenate conditioning if provided
-        assert self.use_conditioning == (conditioned is not None), (
-            "Conditioning tensor must be provided if and only if the model was "
-            "initialized with `use_conditioning=True`."
-        )
+        x = input_tensor
         if conditioned is not None:
             x = torch.cat((x, conditioned), dim=1)
 
