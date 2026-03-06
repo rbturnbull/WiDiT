@@ -337,6 +337,18 @@ def test_unet_3d_interpolates_for_odd_sizes(monkeypatch):
     assert len(calls) == 2
 
 
+def test_unet_add_timestep_noop_when_none():
+    model = Unet(spatial_dim=2, in_channels=1, filters=4, kernel_size=3, layers=2, use_conditioning=False)
+    x = torch.randn(2, 4, 8, 8)
+    proj = torch.nn.Linear(16, 4)
+
+    out1 = model._add_timestep(x, None, proj)
+    out2 = model._add_timestep(x, torch.randn(2, 16), None)
+
+    assert out1 is x
+    assert out2 is x
+
+
 # -------- Optional conditioning OFF path --------
 
 def test_widit_unconditioned_path_runs_and_shapes():
@@ -354,6 +366,26 @@ def test_widit_unconditioned_rejects_conditioned_arg():
                   num_heads=2, patch_size=2, window_size=4, use_conditioning=False)
     with pytest.raises(AssertionError):
         _ = model(x, timestep=None, conditioned=cond)
+
+
+def test_widit_timestep_projection_used_when_embed_dim_differs():
+    torch.manual_seed(0)
+    x, t, cond = _rand_2d(n=1, c=2, h=16, w=12)
+    model = WiDiT(
+        spatial_dim=2,
+        input_size=(16, 12),
+        patch_size=2,
+        in_channels=2,
+        hidden_size=96,
+        depth=2,
+        num_heads=4,
+        window_size=8,
+        mlp_ratio=2.0,
+        timestep_embed_dim=64,  # force projection
+    )
+    assert model.timestep_in_proj is not None
+    y = model(x, t, conditioned=cond)
+    assert y.shape == (1, 2, 16, 12)
 
 
 def test_widit_conditioned_requires_conditioned_arg():

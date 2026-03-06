@@ -64,11 +64,6 @@ class WiDiT(ModelBase):
 
         # Store config to be able to recreate model later
         resolved_timestep_embed_dim = timestep_embed_dim or hidden_size
-        if resolved_timestep_embed_dim != hidden_size:
-            raise ValueError(
-                "WiDiT currently requires timestep_embed_dim == hidden_size "
-                f"(got {resolved_timestep_embed_dim} vs {hidden_size})"
-            )
 
         self.config = dict(
             spatial_dim=spatial_dim,
@@ -140,6 +135,9 @@ class WiDiT(ModelBase):
         # Optional conditioning via timestep embedding → match token dim (hidden_size)
         self.timestep_embed_dim = resolved_timestep_embed_dim
         self.timestep_embedder = TimestepEmbedder(self.timestep_embed_dim)
+        self.timestep_in_proj = None
+        if self.timestep_embed_dim != hidden_size:
+            self.timestep_in_proj = nn.Linear(self.timestep_embed_dim, hidden_size)
 
         # Transformer blocks (Swin shift pattern: 0, ws//2, 0, ws//2, ...)
         shift_none = (0,) * self.spatial_dim
@@ -261,7 +259,11 @@ class WiDiT(ModelBase):
         # Optional timestep conditioning
         timestep_embedding = None
         if timestep is not None:
-            timestep_embedding = self.timestep_embedder(timestep)          # (N, hidden)
+            timestep_embedding = self.timestep_embedder(timestep)          # (N, embed_dim)
+            assert timestep_embedding.shape == (batch_size, self.timestep_embed_dim), \
+                f"timestep embedding shape {tuple(timestep_embedding.shape)} must be (N, hidden={self.timestep_embed_dim})"
+            if self.timestep_in_proj is not None:
+                timestep_embedding = self.timestep_in_proj(timestep_embedding)
             assert timestep_embedding.shape == (batch_size, tokens.shape[-1]), \
                 f"timestep embedding shape {tuple(timestep_embedding.shape)} must be (N, hidden={tokens.shape[-1]})"
 
