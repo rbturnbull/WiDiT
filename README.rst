@@ -32,12 +32,13 @@ WiDiT is a SwinIR-style DiT backbone that unifies **2D images** and **3D volumes
 with N-D windowed attention, optional Swin shifts, and AdaLN-Zero conditioning.
 
 - Single model class: ``widit.models.WiDiT``
+- Also includes a configurable ``widit.models.Unet`` for 2D/3D U-Net baselines
 - Optional timestep conditioning (pass ``timestep=None`` if unused)
 - Shared blocks for 2D/3D via N-D window partitioning
 - Presets for quick experiments in both 2D and 3D
 
 Installation
-==================================
+----------------
 
 Install using pip:
 
@@ -161,10 +162,10 @@ using ``patch_size=2`` and Swin-style window attention:
    import torch
 
    # 2D: B, M, L, XL
-   model_2d = PRESETS["WiDiT-L/2"](in_channels=3, learn_sigma=True)
+   model_2d = PRESETS["WiDiT2D-L"](in_channels=3, learn_sigma=True)
 
    # 3D: B, M, L, XL
-   model_3d = PRESETS["WiDiT3D-M/2"](in_channels=1, learn_sigma=False)
+   model_3d = PRESETS["WiDiT3D-M"](in_channels=1, learn_sigma=False)
 
    # Example inputs
    x2d = torch.randn(1, 3, 64, 48)
@@ -178,6 +179,19 @@ using ``patch_size=2`` and Swin-style window attention:
    # Run
    y2d = model_2d(x2d, t2d, conditioned=c2d)
    y3d = model_3d(x3d, timestep=None, conditioned=c3d)
+
+
+Loading Models
+--------------
+
+Use ``load_model`` to load a saved WiDiT or Unet checkpoint. It infers the
+correct class from the stored config:
+
+.. code-block:: python
+
+   from widit import load_model
+
+   model = load_model("path/to/checkpoint.pt")
 
 
 API Overview
@@ -325,4 +339,3 @@ Credits
 `Robert Turnbull <https://robturnbull.com>`_ - Melbourne Data Analytics Platform (MDAP), The University of Melbourne
 
 .. end-credits
-
