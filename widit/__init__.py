@@ -1,14 +1,21 @@
 from .models import (
     WiDiT,
-    WiDiT2D_B_2,
-    WiDiT2D_M_2,
-    WiDiT2D_L_2,
-    WiDiT2D_XL_2,
-
-    WiDiT3D_B_2,
-    WiDiT3D_M_2,
-    WiDiT3D_L_2,
-    WiDiT3D_XL_2,
-
-    PRESETS
+    Unet,
+    WiDiT2D_B,
+    WiDiT2D_M,
+    WiDiT2D_L,
+    WiDiT2D_XL,
+    WiDiT3D_B,
+    WiDiT3D_M,
+    WiDiT3D_L,
+    WiDiT3D_XL,
+    Unet2D_B,
+    Unet2D_M,
+    Unet2D_L,
+    Unet2D_XL,
+    Unet3D_B,
+    Unet3D_M,
+    Unet3D_L,
+    Unet3D_XL,
+    PRESETS,
 )

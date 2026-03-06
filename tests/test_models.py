@@ -225,23 +225,48 @@ def test_widit_save_and_load_roundtrip(tmp_path):
 
 def _small_input_for_preset(name: str):
     """Return (x, t, cond) sized to be compatible with default patch/window and produce grads."""
-    if "3D" in name:
-        return _rand_3d(n=1, c=1, d=8, h=8, w=6)
+    is_3d = ("3D" in name) or (
+        (name.startswith("WiDiT-") or name.startswith("Unet-"))
+        and "2D" not in name
+    )
+    is_unet = "Unet" in name
+    needs_large = ("-L" in name) or ("-XL" in name)
+
+    # Unet has `layers` maxpool downsamples; ensure spatial dims >= 2^(layers+1)
+    # for reflect padding to be valid at the deepest layers.
+    if is_3d:
+        if is_unet and needs_large:
+            return _rand_3d(n=1, c=1, d=32, h=32, w=32)
+        if is_unet:
+            return _rand_3d(n=1, c=1, d=16, h=16, w=16)
+        return _rand_3d(n=1, c=1, d=8, h=8, w=8)
     else:
+        if is_unet and needs_large:
+            return _rand_2d(n=1, c=1, h=32, w=32)
+        if is_unet:
+            return _rand_2d(n=1, c=1, h=16, w=16)
         return _rand_2d(n=1, c=1, h=16, w=12)
 
 
 def test_presets_dict_has_expected_entries():
     expected = {
-        "WiDiT-B/2", "WiDiT-M/2", "WiDiT-L/2", "WiDiT-XL/2",
-        "WiDiT3D-B/2", "WiDiT3D-M/2", "WiDiT3D-L/2", "WiDiT3D-XL/2",
+        "WiDiT-B", "WiDiT-M", "WiDiT-L", "WiDiT-XL",
+        "WiDiT2D-B", "WiDiT2D-M", "WiDiT2D-L", "WiDiT2D-XL",
+        "WiDiT3D-B", "WiDiT3D-M", "WiDiT3D-L", "WiDiT3D-XL",
+        "Unet-B", "Unet-M", "Unet-L", "Unet-XL",
+        "Unet2D-B", "Unet2D-M", "Unet2D-L", "Unet2D-XL",
+        "Unet3D-B", "Unet3D-M", "Unet3D-L", "Unet3D-XL",
     }
     assert expected.issubset(set(PRESETS.keys())), f"Missing presets: {expected - set(PRESETS.keys())}"
 
 
 @pytest.mark.parametrize("name", [
-    "WiDiT-B/2", "WiDiT-M/2", "WiDiT-L/2", "WiDiT-XL/2",
-    "WiDiT3D-B/2", "WiDiT3D-M/2", "WiDiT3D-L/2", "WiDiT3D-XL/2",
+    "WiDiT-B", "WiDiT-M", "WiDiT-L", "WiDiT-XL",
+    "WiDiT2D-B", "WiDiT2D-M", "WiDiT2D-L", "WiDiT2D-XL",
+    "WiDiT3D-B", "WiDiT3D-M", "WiDiT3D-L", "WiDiT3D-XL",
+    "Unet-B", "Unet-M", "Unet-L", "Unet-XL",
+    "Unet2D-B", "Unet2D-M", "Unet2D-L", "Unet2D-XL",
+    "Unet3D-B", "Unet3D-M", "Unet3D-L", "Unet3D-XL",
 ])
 def test_every_preset_builds_and_runs(name):
     torch.manual_seed(0)
@@ -251,7 +276,10 @@ def test_every_preset_builds_and_runs(name):
     y = model(x, t, conditioned=cond)  # NEW ORDER
 
     # Validate output shape
-    if "3D" in name:
+    if ("3D" in name) or (
+        (name.startswith("WiDiT-") or name.startswith("Unet-"))
+        and "2D" not in name
+    ):
         n, c, d, h, w = x.shape
         assert y.shape == (n, c, d, h, w)
     else:

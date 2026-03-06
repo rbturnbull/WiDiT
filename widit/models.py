@@ -67,15 +67,15 @@ class WiDiT(nn.Module):
         assert spatial_dim in (2, 3), f"spatial_dim must be 2 or 3, got {spatial_dim}"
 
         # Core hyperparameters
-        self.spatial_dims = spatial_dim
+        self.spatial_dim = spatial_dim
         self.in_channels = in_channels
         self.out_channels = out_channels or in_channels
         self.use_conditioning = use_conditioning
         self.use_flash_attention = use_flash_attention
 
         # Normalize per-axis hyperparameters
-        self.patch_size_per_axis = _to_sizes(patch_size, self.spatial_dims)
-        self.window_size_per_axis = _to_sizes(window_size, self.spatial_dims)
+        self.patch_size_per_axis = _to_sizes(patch_size, self.spatial_dim)
+        self.window_size_per_axis = _to_sizes(window_size, self.spatial_dim)
 
         # Attention sanity check
         assert (hidden_size % num_heads) == 0, (
@@ -93,7 +93,7 @@ class WiDiT(nn.Module):
                 in_chans=in_channels,
                 embed_dim=half_hidden,
                 bias=True,
-                spatial_dim=self.spatial_dims,
+                spatial_dim=self.spatial_dim,
             )
             self.conditioned_patch_embed = PatchEmbed(
                 input_size=input_size,
@@ -101,7 +101,7 @@ class WiDiT(nn.Module):
                 in_chans=in_channels,
                 embed_dim=half_hidden,
                 bias=True,
-                spatial_dim=self.spatial_dims,
+                spatial_dim=self.spatial_dim,
             )
         else:
             # single stream uses full hidden_size
@@ -111,7 +111,7 @@ class WiDiT(nn.Module):
                 in_chans=in_channels,
                 embed_dim=hidden_size,
                 bias=True,
-                spatial_dim=self.spatial_dims,
+                spatial_dim=self.spatial_dim,
             )
             self.conditioned_patch_embed = None  # explicitly absent
 
@@ -120,7 +120,7 @@ class WiDiT(nn.Module):
         self.timestep_embedder = TimestepEmbedder(self.timestep_embed_dim)
 
         # Transformer blocks (Swin shift pattern: 0, ws//2, 0, ws//2, ...)
-        shift_none = (0,) * self.spatial_dims
+        shift_none = (0,) * self.spatial_dim
         shift_half = tuple(w // 2 for w in self.window_size_per_axis)
         self.blocks = nn.ModuleList([
             WiDiTBlock(
@@ -129,7 +129,7 @@ class WiDiT(nn.Module):
                 window_size=self.window_size_per_axis,
                 shift_size=(shift_none if (i % 2 == 0) else shift_half),
                 mlp_ratio=mlp_ratio,
-                spatial_dim=self.spatial_dims,
+                spatial_dim=self.spatial_dim,
                 use_flash_attention=self.use_flash_attention,
             )
             for i in range(depth)
@@ -141,7 +141,7 @@ class WiDiT(nn.Module):
             hidden_size=hidden_size,
             patch_size=patch_scalar,
             out_channels=self.out_channels,
-            spatial_dim=self.spatial_dims,
+            spatial_dim=self.spatial_dim,
         )
 
         self.init_weights()
@@ -167,7 +167,7 @@ class WiDiT(nn.Module):
         batch_size, num_tokens, last_dim = token_tensor.shape
         patch_sizes = self.patch_size_per_axis
         out_channels = self.out_channels
-        k = self.spatial_dims
+        k = self.spatial_dim
 
         assert all(p == patch_sizes[0] for p in patch_sizes), "unpatchify assumes equal patch along each axis"
         patch_scalar = patch_sizes[0]
@@ -207,7 +207,7 @@ class WiDiT(nn.Module):
         Returns:
           (N, out_channels, *spatial)
         """
-        assert input_tensor.ndim == 2 + self.spatial_dims, \
+        assert input_tensor.ndim == 2 + self.spatial_dim, \
             f"input_tensor has incorrect shape {tuple(input_tensor.shape)}"
 
         if self.use_conditioning:
@@ -220,7 +220,7 @@ class WiDiT(nn.Module):
                 "This model was constructed with use_conditioning=False; do not pass `conditioned`."
 
         batch_size = input_tensor.shape[0]
-        spatial_sizes = tuple(input_tensor.shape[2 + i] for i in range(self.spatial_dims))
+        spatial_sizes = tuple(input_tensor.shape[2 + i] for i in range(self.spatial_dim))
 
         # Patch-embed and (optionally) concatenate
         tokens_input = self.input_patch_embed(input_tensor)  # (N, T, H or H/2)
@@ -271,27 +271,27 @@ class WiDiT(nn.Module):
         return model
 
 
-def get_conv(spatial_dims: int):
-    return nn.Conv3d if spatial_dims == 3 else nn.Conv2d
+def get_conv(spatial_dim: int):
+    return nn.Conv3d if spatial_dim == 3 else nn.Conv2d
 
 
-def get_maxpool(spatial_dims: int):
-    return nn.MaxPool3d if spatial_dims == 3 else nn.MaxPool2d
+def get_maxpool(spatial_dim: int):
+    return nn.MaxPool3d if spatial_dim == 3 else nn.MaxPool2d
 
 
-def get_upsample_mode(spatial_dims: int):
-    return "trilinear" if spatial_dims == 3 else "bilinear"
+def get_upsample_mode(spatial_dim: int):
+    return "trilinear" if spatial_dim == 3 else "bilinear"
 
 
 def conv(
-    spatial_dims: int,
+    spatial_dim: int,
     in_channels: int,
     filters: int,
     kernel_size: int,
     padding: int,
     activation: nn.Module | None,
 ):
-    Conv = get_conv(spatial_dims)
+    Conv = get_conv(spatial_dim)
 
     layers = [
         Conv(
@@ -310,7 +310,7 @@ def conv(
 
 
 def conv_block(
-    spatial_dims: int,
+    spatial_dim: int,
     in_channels: int,
     filters: int,
     kernel_size: int,
@@ -318,39 +318,39 @@ def conv_block(
     activation: nn.Module,
 ):
     return nn.Sequential(
-        conv(spatial_dims, in_channels, filters, kernel_size, padding, activation),
-        conv(spatial_dims, filters, filters, kernel_size, padding, activation),
+        conv(spatial_dim, in_channels, filters, kernel_size, padding, activation),
+        conv(spatial_dim, filters, filters, kernel_size, padding, activation),
     )
 
 
 def down_block(
-    spatial_dims: int,
+    spatial_dim: int,
     in_channels: int,
     filters: int,
     kernel_size: int,
     padding: int,
     activation: nn.Module,
 ):
-    MaxPool = get_maxpool(spatial_dims)
+    MaxPool = get_maxpool(spatial_dim)
 
     return nn.Sequential(
         MaxPool(kernel_size=2, stride=2),
-        conv_block(spatial_dims, in_channels, filters, kernel_size, padding, activation),
+        conv_block(spatial_dim, in_channels, filters, kernel_size, padding, activation),
     )
 
 
 def up_block(
-    spatial_dims: int,
+    spatial_dim: int,
     in_channels: int,
     filters: int,
     kernel_size: int,
     padding: int,
     activation: nn.Module,
 ):
-    mode = get_upsample_mode(spatial_dims)
+    mode = get_upsample_mode(spatial_dim)
 
     return nn.Sequential(
-        conv_block(spatial_dims, in_channels, filters, kernel_size, padding, activation),
+        conv_block(spatial_dim, in_channels, filters, kernel_size, padding, activation),
         nn.Upsample(scale_factor=2, mode=mode, align_corners=False),
     )
 
@@ -393,14 +393,14 @@ class Unet(nn.Module):
         self.use_conditioning = use_conditioning
 
         self.layers = layers
-        self.spatial_dims = spatial_dim
-        self.kernel_size_per_axis = _to_sizes(kernel_size, self.spatial_dims)
+        self.spatial_dim = spatial_dim
+        self.kernel_size_per_axis = _to_sizes(kernel_size, self.spatial_dim)
         padding = tuple(k // 2 for k in self.kernel_size_per_axis)
         act = nn.ReLU()
 
         # Initial conv
         self.inconv = conv_block(
-            spatial_dims,
+            spatial_dim,
             in_channels,
             filters,
             self.kernel_size_per_axis,
@@ -423,7 +423,7 @@ class Unet(nn.Module):
             out_f = in_f * 2
             self.down_blocks.append(
                 down_block(
-                    spatial_dims,
+                    spatial_dim,
                     in_f,
                     out_f,
                     self.kernel_size_per_axis,
@@ -436,7 +436,7 @@ class Unet(nn.Module):
         # Bottleneck upsample
         self.bottleneck = nn.Upsample(
             scale_factor=2,
-            mode=get_upsample_mode(spatial_dims),
+            mode=get_upsample_mode(spatial_dim),
             align_corners=False,
         )
         self.bottleneck_time_proj = nn.Linear(
@@ -451,7 +451,7 @@ class Unet(nn.Module):
             in_f = filters * (2**i) + out_f
             self.up_blocks.append(
                 up_block(
-                    spatial_dims,
+                    spatial_dim,
                     in_f,
                     out_f,
                     self.kernel_size_per_axis,
@@ -464,7 +464,7 @@ class Unet(nn.Module):
         # Output
         self.outconv = nn.Sequential(
             conv(
-                spatial_dims,
+                spatial_dim,
                 filters * 3,
                 filters,
                 self.kernel_size_per_axis,
@@ -472,7 +472,7 @@ class Unet(nn.Module):
                 act,
             ),
             conv(
-                spatial_dims,
+                spatial_dim,
                 filters,
                 out_channels,
                 kernel_size=1,
@@ -525,7 +525,7 @@ class Unet(nn.Module):
         Returns:
           (N, out_channels, *spatial)
         """
-        assert input_tensor.ndim == 2 + self.spatial_dims, \
+        assert input_tensor.ndim == 2 + self.spatial_dim, \
             f"input_tensor has incorrect shape {tuple(input_tensor.shape)}"
 
         if self.use_conditioning:
@@ -571,7 +571,7 @@ class Unet(nn.Module):
                 x = F.interpolate(
                     x,
                     size=skip.shape[2:],
-                    mode=get_upsample_mode(self.spatial_dims),
+                    mode=get_upsample_mode(self.spatial_dim),
                     align_corners=False,
                 )
             x = self.up_blocks[i](torch.cat((skip, x), dim=1))
@@ -582,7 +582,7 @@ class Unet(nn.Module):
             x = F.interpolate(
                 x,
                 size=skip.shape[2:],
-                mode=get_upsample_mode(self.spatial_dims),
+                mode=get_upsample_mode(self.spatial_dim),
                 align_corners=False,
             )
         x = torch.cat((skip, x), dim=1)
@@ -612,29 +612,52 @@ class Unet(nn.Module):
 
 
 # ---- WiDiT presets ----
-def WiDiT2D_B_2(**kw):   return WiDiT(spatial_dim=2, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
-def WiDiT2D_M_2(**kw):   return WiDiT(spatial_dim=2, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT2D_L_2(**kw):   return WiDiT(spatial_dim=2, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT2D_XL_2(**kw):  return WiDiT(spatial_dim=2, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_B(**kw):   return WiDiT(spatial_dim=2, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
+def WiDiT2D_M(**kw):   return WiDiT(spatial_dim=2, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_L(**kw):   return WiDiT(spatial_dim=2, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT2D_XL(**kw):  return WiDiT(spatial_dim=2, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
 
-def WiDiT3D_B_2(**kw):   return WiDiT(spatial_dim=3, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
-def WiDiT3D_M_2(**kw):   return WiDiT(spatial_dim=3, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT3D_L_2(**kw):   return WiDiT(spatial_dim=3, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
-def WiDiT3D_XL_2(**kw):  return WiDiT(spatial_dim=3, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_B(**kw):   return WiDiT(spatial_dim=3, depth=12, hidden_size=768,   patch_size=2, num_heads=12, **kw)
+def WiDiT3D_M(**kw):   return WiDiT(spatial_dim=3, depth=12, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_L(**kw):   return WiDiT(spatial_dim=3, depth=24, hidden_size=1024,  patch_size=2, num_heads=16, **kw)
+def WiDiT3D_XL(**kw):  return WiDiT(spatial_dim=3, depth=28, hidden_size=1152,  patch_size=2, num_heads=16, **kw)
+
+# ---- Unet presets ----
+def Unet2D_B(**kw):   return Unet(spatial_dim=2, layers=3, filters=64,  kernel_size=3, **kw)
+def Unet2D_M(**kw):   return Unet(spatial_dim=2, layers=3, filters=128, kernel_size=3, **kw)
+def Unet2D_L(**kw):   return Unet(spatial_dim=2, layers=4, filters=128, kernel_size=3, **kw)
+def Unet2D_XL(**kw):  return Unet(spatial_dim=2, layers=4, filters=256, kernel_size=3, **kw)
+
+def Unet3D_B(**kw):   return Unet(spatial_dim=3, layers=3, filters=64,  kernel_size=3, **kw)
+def Unet3D_M(**kw):   return Unet(spatial_dim=3, layers=3, filters=128, kernel_size=3, **kw)
+def Unet3D_L(**kw):   return Unet(spatial_dim=3, layers=4, filters=128, kernel_size=3, **kw)
+def Unet3D_XL(**kw):  return Unet(spatial_dim=3, layers=4, filters=256, kernel_size=3, **kw)
 
 PRESETS = {
     # 2D
-    "WiDiT-B/2":  WiDiT2D_B_2,
-    "WiDiT-M/2":  WiDiT2D_M_2,
-    "WiDiT-L/2":  WiDiT2D_L_2,
-    "WiDiT-XL/2": WiDiT2D_XL_2,
-    "WiDiT2D-B/2":  WiDiT2D_B_2,
-    "WiDiT2D-M/2":  WiDiT2D_M_2,
-    "WiDiT2D-L/2":  WiDiT2D_L_2,
-    "WiDiT2D-XL/2": WiDiT2D_XL_2,
+    "WiDiT2D-B":  WiDiT2D_B,
+    "WiDiT2D-M":  WiDiT2D_M,
+    "WiDiT2D-L":  WiDiT2D_L,
+    "WiDiT2D-XL": WiDiT2D_XL,
+    "Unet2D-B":  Unet2D_B,
+    "Unet2D-M":  Unet2D_M,
+    "Unet2D-L":  Unet2D_L,
+    "Unet2D-XL": Unet2D_XL,
     # 3D
-    "WiDiT3D-B/2":  WiDiT3D_B_2,
-    "WiDiT3D-M/2":  WiDiT3D_M_2,
-    "WiDiT3D-L/2":  WiDiT3D_L_2,
-    "WiDiT3D-XL/2": WiDiT3D_XL_2,
+    "WiDiT-B":   WiDiT3D_B,
+    "WiDiT-M":   WiDiT3D_M,
+    "WiDiT-L":   WiDiT3D_L,
+    "WiDiT-XL":  WiDiT3D_XL,
+    "WiDiT3D-B":  WiDiT3D_B,
+    "WiDiT3D-M":  WiDiT3D_M,
+    "WiDiT3D-L":  WiDiT3D_L,
+    "WiDiT3D-XL": WiDiT3D_XL,
+    "Unet-B":    Unet3D_B,
+    "Unet-M":    Unet3D_M,
+    "Unet-L":    Unet3D_L,
+    "Unet-XL":   Unet3D_XL,
+    "Unet3D-B":  Unet3D_B,
+    "Unet3D-M":  Unet3D_M,
+    "Unet3D-L":  Unet3D_L,
+    "Unet3D-XL": Unet3D_XL,
 }
