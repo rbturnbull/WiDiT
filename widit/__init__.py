@@ -18,4 +18,5 @@ from .models import (
     Unet3D_L,
     Unet3D_XL,
     PRESETS,
+    load_model,
 )

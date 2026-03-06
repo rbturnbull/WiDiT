@@ -2,7 +2,7 @@
 import pytest
 import torch
 
-from widit import WiDiT, Unet, PRESETS
+from widit import WiDiT, Unet, PRESETS, load_model
 
 
 def _rand_2d(n=2, c=1, h=16, w=12):
@@ -221,6 +221,77 @@ def test_widit_save_and_load_roundtrip(tmp_path):
     assert all(not p.is_cuda for p in loaded.parameters())
 
 
+def test_unet_save_and_load_roundtrip(tmp_path):
+    torch.manual_seed(123)
+    model = Unet(spatial_dim=2, in_channels=1, filters=8, kernel_size=3, layers=2, use_conditioning=False)
+    for param in model.parameters():
+        param.data.copy_(torch.randn_like(param))  # give the weights non-trivial values
+
+    save_path = tmp_path / "checkpoints" / "unet.pt"
+    model.save(save_path)
+
+    assert save_path.exists()
+    loaded = Unet.load(save_path, map_location="cpu")
+
+    assert loaded.config == model.config
+    original_state = model.state_dict()
+    loaded_state = loaded.state_dict()
+    for key in original_state:
+        torch.testing.assert_close(loaded_state[key], original_state[key])
+    assert all(not p.is_cuda for p in loaded.parameters())
+
+
+def test_load_model_widit_roundtrip(tmp_path):
+    torch.manual_seed(123)
+    model = WiDiT(
+        spatial_dim=2,
+        input_size=(8, 8),
+        patch_size=2,
+        in_channels=1,
+        hidden_size=32,
+        depth=2,
+        num_heads=4,
+        window_size=4,
+        mlp_ratio=3.0,
+        use_conditioning=False,
+    )
+    for param in model.parameters():
+        param.data.copy_(torch.randn_like(param))
+
+    save_path = tmp_path / "checkpoints" / "widit-load-model.pt"
+    model.save(save_path)
+
+    loaded = load_model(save_path)
+    assert isinstance(loaded, WiDiT)
+    assert loaded.config == model.config
+    for key in model.state_dict():
+        torch.testing.assert_close(loaded.state_dict()[key], model.state_dict()[key])
+
+
+def test_load_model_unet_roundtrip(tmp_path):
+    torch.manual_seed(123)
+    model = Unet(spatial_dim=2, in_channels=1, filters=8, kernel_size=3, layers=2, use_conditioning=False)
+    for param in model.parameters():
+        param.data.copy_(torch.randn_like(param))
+
+    save_path = tmp_path / "checkpoints" / "unet-load-model.pt"
+    model.save(save_path)
+
+    loaded = load_model(save_path)
+    assert isinstance(loaded, Unet)
+    assert loaded.config == model.config
+    for key in model.state_dict():
+        torch.testing.assert_close(loaded.state_dict()[key], model.state_dict()[key])
+
+
+def test_load_model_raises_when_all_classes_fail(tmp_path):
+    bad_path = tmp_path / "not_a_checkpoint.txt"
+    bad_path.write_text("not a checkpoint")
+
+    with pytest.raises(RuntimeError, match="All model classes failed"):
+        _ = load_model(bad_path)
+
+
 # -------------------- PRESETS --------------------
 
 def _small_input_for_preset(name: str):
@@ -313,7 +384,10 @@ def test_unet_2d_interpolates_for_odd_sizes(monkeypatch):
 
     y = model(x, t)
     assert y.shape == (1, 1, 9, 11)
-    assert len(calls) == 2
+    target_size = x.shape[2:]
+    size_calls = [c for c in calls if c[1].get("size") is not None]
+    assert len(size_calls) == 2
+    assert any(c[1].get("size") == target_size for c in size_calls)
 
 
 def test_unet_3d_interpolates_for_odd_sizes(monkeypatch):
@@ -334,7 +408,10 @@ def test_unet_3d_interpolates_for_odd_sizes(monkeypatch):
 
     y = model(x, t)
     assert y.shape == (1, 1, 9, 9, 11)
-    assert len(calls) == 2
+    target_size = x.shape[2:]
+    size_calls = [c for c in calls if c[1].get("size") is not None]
+    assert len(size_calls) == 2
+    assert any(c[1].get("size") == target_size for c in size_calls)
 
 
 def test_unet_add_timestep_noop_when_none():

@@ -651,3 +651,17 @@ PRESETS = {
     "Unet3D-L":  Unet3D_L,
     "Unet3D-XL": Unet3D_XL,
 }
+
+
+def load_model(checkpoint:Path) -> ModelBase:
+    """Convenience function to load a model from checkpoint, inferring the class from the config."""
+    for model_class in (Unet, WiDiT):
+        try:
+            model = model_class.load(checkpoint)
+            break
+        except Exception:
+            continue
+    else:
+        raise RuntimeError("All model classes failed")
+
+    return model
