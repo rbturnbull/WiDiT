@@ -386,6 +386,7 @@ class Unet(nn.Module):
 
         out_channels = out_channels or in_channels
         self.out_channels = out_channels
+        self.in_channels = in_channels
 
         if use_conditioning:
             in_channels *= 2  # Concatenate conditioning channel
@@ -481,6 +482,18 @@ class Unet(nn.Module):
         )
         self.out_time_proj = nn.Linear(self.timestep_embed_dim, filters * 3)
 
+        self.init_weights()
+
+    def init_weights(self) -> None:
+        def _xavier_linear(module: nn.Module) -> None:
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
+        self.apply(_xavier_linear)
+        self.timestep_embedder.init_weights()
+
     def _add_timestep(
         self,
         x: torch.Tensor,
@@ -528,6 +541,9 @@ class Unet(nn.Module):
         timestep_embedding = (
             self.timestep_embedder(timestep) if timestep is not None else None
         )
+        if timestep_embedding is not None:
+            assert timestep_embedding.shape == (input_tensor.shape[0], self.timestep_embed_dim), \
+                f"timestep embedding shape {tuple(timestep_embedding.shape)} must be (N, hidden={self.timestep_embed_dim})"
 
         # Concatenate conditioning if provided
         x = input_tensor
