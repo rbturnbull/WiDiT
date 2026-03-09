@@ -3,7 +3,6 @@ from typing import Sequence
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from timm.models.vision_transformer import Mlp
 
 from .window import (
     _prod,
@@ -66,6 +65,33 @@ def _roll_channels_last(x: torch.Tensor, shift_sizes: Sequence[int], invert: boo
     return torch.roll(x, shifts=shifts, dims=dims)
 
 
+class MultiLayerPerceptron(nn.Module):
+    def __init__(
+        self,
+        *,
+        in_features: int,
+        hidden_features: int | None = None,
+        out_features: int | None = None,
+        act_layer: callable = nn.GELU,
+        drop: float = 0.0,
+    ):
+        super().__init__()
+        hidden_features = hidden_features or in_features
+        out_features = out_features or in_features
+        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.act = act_layer()
+        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.drop = nn.Dropout(drop) if drop and drop > 0 else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+
 class WiDiTBlock(nn.Module):
     """
     N-D windowed attention + MLP with adaLN-Zero conditioning; optional N-D Swin shift.
@@ -105,7 +131,7 @@ class WiDiTBlock(nn.Module):
         )
         self.pre_mlp_norm = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
 
-        self.mlp = Mlp(
+        self.mlp = MultiLayerPerceptron(
             in_features=dim,
             hidden_features=int(dim * mlp_ratio),
             act_layer=lambda: nn.GELU(approximate="tanh"),

@@ -15,7 +15,7 @@ def _to_tuple(patch_size: int | Sequence[int], expected_dims: int) -> tuple[int,
 class PatchEmbed(nn.Module):
     """
     ND Patch Embedding that:
-      • delegates to timm PatchEmbed for 2D inputs: (N, C, H, W)
+      • uses Conv2d for 2D inputs: (N, C, H, W)
       • uses Conv3d for 3D inputs: (N, C, D, H, W)
 
     Args:
@@ -115,7 +115,7 @@ class PatchEmbed(nn.Module):
     def init_weights2d(self) -> None:
         """
         Xavier-uniform on projection weights; zero bias if present.
-        Works for both 2D (timm PatchEmbed) and 3D (Conv3d) paths.
+        Works for both 2D (Conv2d) and 3D (Conv3d) paths.
         """
         if self.patch_embedding_2d is not None:
             proj = self.patch_embedding_2d
@@ -135,7 +135,7 @@ class PatchEmbed(nn.Module):
     def init_weights(self) -> None:
         """
         Xavier-uniform on projection weights; zero bias if present.
-        Works for both 2D (timm PatchEmbed) and 3D (Conv3d) paths.
+        Works for both 2D (Conv2d) and 3D (Conv3d) paths.
         """
         # If the 2D path is constructed
         self.init_weights2d()
