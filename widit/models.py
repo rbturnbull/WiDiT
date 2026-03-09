@@ -46,7 +46,6 @@ class WiDiT(ModelBase):
         self,
         *,
         spatial_dim: int,
-        input_size: int | Sequence[int] | None = None,
         patch_size: int | Sequence[int] = 2,
         in_channels: int = 1,
         out_channels: int|None = None,
@@ -67,7 +66,6 @@ class WiDiT(ModelBase):
 
         self.config = dict(
             spatial_dim=spatial_dim,
-            input_size=input_size,
             patch_size=patch_size,
             in_channels=in_channels,
             hidden_size=hidden_size,
@@ -105,7 +103,6 @@ class WiDiT(ModelBase):
             assert (hidden_size % 2) == 0, "hidden_size must be even when use_conditioning=True"
             half_hidden = hidden_size // 2
             self.input_patch_embed = PatchEmbed(
-                input_size=input_size,
                 patch_size=self.patch_size_per_axis,
                 in_chans=in_channels,
                 embed_dim=half_hidden,
@@ -113,7 +110,6 @@ class WiDiT(ModelBase):
                 spatial_dim=self.spatial_dim,
             )
             self.conditioned_patch_embed = PatchEmbed(
-                input_size=input_size,
                 patch_size=self.patch_size_per_axis,
                 in_chans=in_channels,
                 embed_dim=half_hidden,
@@ -123,7 +119,6 @@ class WiDiT(ModelBase):
         else:
             # single stream uses full hidden_size
             self.input_patch_embed = PatchEmbed(
-                input_size=input_size,
                 patch_size=self.patch_size_per_axis,
                 in_chans=in_channels,
                 embed_dim=hidden_size,

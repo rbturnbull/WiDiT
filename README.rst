@@ -52,7 +52,7 @@ Or
 
     pip install git+https://github.com/rbturnbull/widit.git
 
-WiDiT depends on ``torch`` and ``timm`` (for the 2D patch embedding path).
+WiDiT depends on ``torch``.
 
 .. warning::
 

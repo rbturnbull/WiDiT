@@ -30,7 +30,6 @@ def test_widit_2d_forward_shapes_and_grad(out_channels):
 
     model = WiDiT(
         spatial_dim=2,
-        input_size=(16, 12),
         patch_size=2,
         in_channels=3,
         hidden_size=128,
@@ -59,7 +58,6 @@ def test_widit_2d_tuple_window_and_padding():
     x, t, cond = _rand_2d(n=1, c=2, h=18, w=14)  # p=2 -> grid 9x7
     model = WiDiT(
         spatial_dim=2,
-        input_size=(18, 14),
         patch_size=2,
         in_channels=2,
         hidden_size=96,
@@ -78,7 +76,6 @@ def test_widit_2d_timestep_none():
     x, t, cond = _rand_2d(n=1, c=2, h=16, w=12)
     model = WiDiT(
         spatial_dim=2,
-        input_size=(16, 12),
         patch_size=2,
         in_channels=2,
         hidden_size=96,
@@ -101,7 +98,6 @@ def test_widit_3d_forward_shapes_and_grad(out_channels):
 
     model = WiDiT(
         spatial_dim=3,
-        input_size=(8, 8, 6),
         patch_size=2,
         in_channels=1,
         hidden_size=144,
@@ -127,7 +123,6 @@ def test_widit_3d_nonuniform_window_padding():
     x, t, cond = _rand_3d(n=1, c=2, d=10, h=10, w=8)  # grid 5x5x4
     model = WiDiT(
         spatial_dim=3,
-        input_size=(10, 10, 8),
         patch_size=2,
         in_channels=2,
         hidden_size=160,
@@ -149,7 +144,6 @@ def test_widit_cuda_if_available():
     x, t, cond = _rand_2d(n=2, c=1, h=16, w=16)
     model = WiDiT(
         spatial_dim=2,
-        input_size=(16, 16),
         patch_size=2,
         in_channels=1,
         hidden_size=64,
@@ -176,7 +170,6 @@ def test_widit_mismatched_conditioned_shape_raises():
     cond = cond[:, :, :7, :8]  # wrong H
     model = WiDiT(
         spatial_dim=2,
-        input_size=(8, 8),
         patch_size=2,
         in_channels=1,
         hidden_size=64,
@@ -193,7 +186,6 @@ def test_widit_save_and_load_roundtrip(tmp_path):
     torch.manual_seed(123)
     model = WiDiT(
         spatial_dim=2,
-        input_size=(8, 8),
         patch_size=2,
         in_channels=1,
         hidden_size=32,
@@ -245,7 +237,6 @@ def test_load_model_widit_roundtrip(tmp_path):
     torch.manual_seed(123)
     model = WiDiT(
         spatial_dim=2,
-        input_size=(8, 8),
         patch_size=2,
         in_channels=1,
         hidden_size=32,
@@ -450,7 +441,6 @@ def test_widit_timestep_projection_used_when_embed_dim_differs():
     x, t, cond = _rand_2d(n=1, c=2, h=16, w=12)
     model = WiDiT(
         spatial_dim=2,
-        input_size=(16, 12),
         patch_size=2,
         in_channels=2,
         hidden_size=96,

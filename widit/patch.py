@@ -2,7 +2,6 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
-from timm.models.vision_transformer import PatchEmbed as PatchEmbed2D
 
 
 def _to_tuple(patch_size: int | Sequence[int], expected_dims: int) -> tuple[int, ...]:
@@ -20,7 +19,6 @@ class PatchEmbed(nn.Module):
       • uses Conv3d for 3D inputs: (N, C, D, H, W)
 
     Args:
-      input_size: API parity with timm; not strictly required for forward
       patch_size: int or tuple; if int, broadcast to all spatial dims
       in_chans:   input channels (C)
       embed_dim:  output channels per token
@@ -33,7 +31,6 @@ class PatchEmbed(nn.Module):
     """
     def __init__(
         self,
-        input_size: int | Sequence[int] | None,
         patch_size: int | Sequence[int],
         in_chans: int,
         embed_dim: int,
@@ -41,14 +38,13 @@ class PatchEmbed(nn.Module):
         spatial_dim: int | None = None,
     ):
         super().__init__()
-        self.input_size = input_size
         self.patch_size = patch_size
         self.in_chans = in_chans
         self.embed_dim = embed_dim
         self.bias = bias
 
         # Lazy init: build only the required path (2D or 3D) when needed.
-        self.patch_embedding_2d: PatchEmbed2D | None = None
+        self.patch_embedding_2d: nn.Conv2d | None = None
         self.patch_embedding_3d: nn.Conv3d | None = None
 
         if spatial_dim == 2:
@@ -56,17 +52,15 @@ class PatchEmbed(nn.Module):
         elif spatial_dim == 3:
             self._build_3d_patch_embedding()
 
-    def _build_2d_patch_embedding(self, device=None, dtype=None) -> PatchEmbed2D:
+    def _build_2d_patch_embedding(self, device=None, dtype=None) -> nn.Conv2d:
         if self.patch_embedding_2d is None:
             patch_size_2d = _to_tuple(self.patch_size, 2)
-            img_size = self.input_size if isinstance(self.input_size, (int, tuple, list)) else None
-            self.patch_embedding_2d = PatchEmbed2D(
-                img_size=img_size,
-                patch_size=patch_size_2d,
-                in_chans=self.in_chans,
-                embed_dim=self.embed_dim,
+            self.patch_embedding_2d = nn.Conv2d(
+                self.in_chans,
+                self.embed_dim,
+                kernel_size=patch_size_2d,
+                stride=patch_size_2d,
                 bias=self.bias,
-                flatten=True,  # (N, T, embed_dim)
             )
             self.init_weights2d()
             if device is not None or dtype is not None:
@@ -87,7 +81,9 @@ class PatchEmbed(nn.Module):
 
     def _forward_2d(self, x: torch.Tensor) -> torch.Tensor:
         assert self.patch_embedding_2d is not None, "2D patch embedding not initialized"
-        return self.patch_embedding_2d(x)  # (N, T, embed_dim)
+        x = self.patch_embedding_2d(x)     # (N, embed_dim, H/ph, W/pw)
+        x = x.flatten(2).transpose(1, 2)   # (N, T, embed_dim)
+        return x
 
     def _forward_3d(self, x: torch.Tensor) -> torch.Tensor:
         assert self.patch_embedding_3d is not None, "3D patch embedding not initialized"
@@ -122,7 +118,7 @@ class PatchEmbed(nn.Module):
         Works for both 2D (timm PatchEmbed) and 3D (Conv3d) paths.
         """
         if self.patch_embedding_2d is not None:
-            proj = self.patch_embedding_2d.proj  # Conv2d inside timm PatchEmbed
+            proj = self.patch_embedding_2d
             w = proj.weight
             nn.init.xavier_uniform_(w.view(w.shape[0], -1))
             if proj.bias is not None:
