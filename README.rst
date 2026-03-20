@@ -75,7 +75,6 @@ Quick Start (2D)
 
    model = WiDiT(
        spatial_dim=2,
-       input_size=(H, W),        # kept for API parity; not required at forward
        patch_size=2,             # must divide H and W
        in_channels=C,
        hidden_size=256,          # must be divisible by num_heads and even
@@ -107,7 +106,6 @@ Quick Start (3D)
 
    model = WiDiT(
        spatial_dim=3,
-       input_size=(D, H, W),
        patch_size=2,             # must divide D/H/W
        in_channels=C,
        hidden_size=256,

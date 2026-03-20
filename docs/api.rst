@@ -6,7 +6,6 @@ API Overview
    WiDiT(
        *,
        spatial_dim: int,                          # 2 (images) or 3 (volumes)
-       input_size: int | Sequence[int] | None = None,
        patch_size: int | Sequence[int] = 2,       # per-axis tuple allowed
        in_channels: int = 1,
        hidden_size: int = 768,                    # even; divisible by num_heads
